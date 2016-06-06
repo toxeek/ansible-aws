@@ -10,7 +10,7 @@
       security_group: dbserver
       image: ami-e88fcd9f # ubuntu 14.04 
       region: eu-west-1 
-      subnet_id: subnet-f6319c92
+      subnet_id: SUBNET_ID # CHANGE ME
       keypair: tricky
       count: 1
       env: staging # better pass it to playbook with -e "env=staging"
@@ -27,11 +27,11 @@
             - proto: tcp
               from_port: 22
               to_port: 22
-              cidr_ip: 92.30.2.128/32
+              cidr_ip: MY_IP_CIDR/32
             - proto: tcp
               from_port: 3306
               to_port: 3306
-              cidr_ip: 92.30.2.128/32
+              cidr_ip: MY_IP_CIDR/32
           rules_egress:
             - proto: all
               cidr_ip: 0.0.0.0/0
