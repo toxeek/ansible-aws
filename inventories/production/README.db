@@ -1,0 +1,30 @@
+We can have multiple groups in the inventory files, say
+[webservers]
+..
+
+[appservers]
+...
+
+# AWS section, declaring country groups, to pass to ec2.py dynamic inventory 
+# (see ansible doc for it, we can pass regions and availability zones)
+
+[USA]
+[Europe]
+
+# Attaching EC2 groups as children
+[USA:children]
+us-east-1
+us-west-1
+
+[Europe:children]
+eu-west-1
+eu-central-1
+
+
+
+
+Then, we can point ansible to this inventory (-i) and make it linit execution to a certain group of servers, e.g:
+
+ansible-playbook -i inventory_path/ --limit webservers playbook.yml
+ansible-playbook -i inventory_path/ --limit "Europe" playbook.yml
+
