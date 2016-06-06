@@ -27,11 +27,11 @@
             - proto: tcp
               from_port: 22
               to_port: 22
-              cidr_ip: MY_IP_CIDR/32
+              cidr_ip: MY_IP_CIDR/32 # CHANGE ME
             - proto: tcp
               from_port: 3306
               to_port: 3306
-              cidr_ip: MY_IP_CIDR/32
+              cidr_ip: MY_IP_CIDR/32 # CHANGE ME
           rules_egress:
             - proto: all
               cidr_ip: 0.0.0.0/0
