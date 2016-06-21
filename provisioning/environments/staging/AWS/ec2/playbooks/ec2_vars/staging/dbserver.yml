@@ -1,9 +1,0 @@
----
-instance_type: t2.micro
-security_group: default
-image: ami-e88fcd9f # ubuntu 14.04 
-region: eu-west-1 
-subnet_id: subnet-f6319c92 # CHANGE ME
-# server_type: dbserver # passed as extra var to playbook
-keypair: tricky
-# env: staging # better pass it to playbook with -e "env=staging"
