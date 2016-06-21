@@ -3,8 +3,7 @@ ansible aws provisioning PoC with multiple deployment environments
 
 The intention is to create a centralised but also well seggregated infrastructure so we can easily divide between different deployment environments such as staging and production.
 
-inventory files: production and staging have different inventories
- - new span ec2 instances: are added to the specific environment's inventory file from within the playbook - deleted ec2 instances: are/should be deleted from the environment's inventory file also dynamically.
+inventory files: production and staging have different inventories. New span ec2 instances: are added to the specific environment's inventory file from within the playbook - deleted ec2 instances: are/should be deleted from the environment's inventory file also dynamically.
 
 The ec2 dynamic inventory script lives under the playbook directory, provisioning environment, in this case
 ```
