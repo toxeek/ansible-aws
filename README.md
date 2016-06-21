@@ -7,12 +7,12 @@ inventory files: production and staging have different inventories
 new spun ec2 instances: are added to the specific environment's inventory file from within the playbook
 deleted ec2 instances: are/should be deleted from the environment's inventory file also dynamically.
 
-The ec2 dynamic inventory script lives under the playbook directory, in this case
+The ec2 dynamic inventory script lives under the playbook directory, provisioning environment, in this case
 ```
-/etc/ansible/provisioning/environments/{staging,production}/AWS/ec2/playbooks
+/etc/ansible/provisioning/environments/{staging,production}/AWS/ec2/playbooks/dynamic_inventory/
 ```
 
-Roles live all under /etc/ansible/roles and are divided given the functionality they provide, e.g: install and configure apache, install and configure mysql (for stacks like vpc + subnet + gateway Cloudfront module may be better for this).
+Roles live all under /etc/ansible/roles and are divided given the functionality they provide, e.g: create ec2 instance, install and configure apache, install and configure mysql (for stacks like vpc + subnet + gateway Cloudfront module may be better for this). I don't have a separated environment for provisioning and deployment in the roles as it shouldn't really matter, as wer use a Hiera like structure for Ansible. So for creating an ec2 instance we'd use the role ec2_create, for provisioning a full dbserver stack we'd use the provision_dbserver role? etc. Thi sstructure aims to be able to house different cloud providers.
 
 We could add different cloud providers, data centers etc. under provisioning/environments/{{environment}} and the playbook/s will live as in the AWS use case.
 
