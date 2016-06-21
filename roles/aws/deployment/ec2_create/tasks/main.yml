@@ -1,0 +1,39 @@
+---
+- name: include variables
+  include_vars: "ec2_vars/{{ env }}/{{ server_type }}.yml"
+
+- name: Launch the new EC2 Instance
+  ec2: 
+    group: "{{ security_group }}"
+    instance_type: "{{ instance_type }}" 
+    image: "{{ image }}" 
+    assign_public_ip: yes
+    wait: true 
+    region: "{{ region }}" 
+    keypair: "{{ keypair }}"
+    count: "{{ count }}"
+    vpc_subnet_id: "{{ subnet_id }}"
+  register: ec2
+
+- name: Add instance to inventory
+  lineinfile: 
+    dest: "/etc/ansible/inventories/{{ env }}/hosts" 
+    line: "{{ item.public_ip }}"
+    insertafter: "[{{ server_type }}]"
+  with_items: ec2.instances
+
+- name: Wait for SSH to come up
+  local_action: wait_for 
+                host={{ item.public_ip }} 
+                port=22 
+                state=started
+  with_items: ec2.instances
+
+- name: Add tag to Instance(s)
+  local_action: ec2_tag resource={{ item.id }} region={{ region }} state=present
+  with_items: ec2.instances
+  args:
+    tags:
+      Name: dbserver
+      env: "{{ env }}"
+      # env is an extra var passed to the playbook

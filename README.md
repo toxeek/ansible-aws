@@ -20,7 +20,7 @@ If you are going to delete an instance, you better use the playbook or role for 
 
 An example of playbook execution to provision instances in ec2 (cd first into the playbooks dir):
 ```bash
-# ansible-playbook --private-key ~/.ssh/tricky-key-pair-ireland.pem -e "env=staging" -vvvv create_instance.yml
+# ansible-playbook --private-key ~/.ssh/tricky-key-pair-ireland.pem -e "env=staging server_type=dbserver count=1" -vvvv create_instance.yml
 ```
 
 If you want to provision using roles in the playbook, then there is a demo role under the roles/ directory taken from http://allandenot.com/devops/2015/01/31/provisioning-ec2-hosts-with-ansible.html
