@@ -11,7 +11,7 @@ The ec2 dynamic inventory script lives under the playbook directory, provisionin
 /etc/ansible/provisioning/environments/{staging,production}/AWS/ec2/playbooks/dynamic_inventory/
 ```
 
-Roles live all under /etc/ansible/roles and are divided given the functionality they provide, e.g: create ec2 instance, install and configure apache, install and configure mysql (for stacks like vpc + subnet + gateway Cloudfront module may be better for this). Roles have the same deployment/provisioning enviroment seggregation. All that's related to create/delete would go into deployment roles directory, and all that is installing apache, mysql, etc. would go into provisioning. This shouldn't matter much at the time of running the playbooks, just make sure the roles path in the ansible.cfg is modified to include the relevant structure (see this ansible.cfg for an example=. This structure aims to be able to house different cloud providers.
+Roles live all under /etc/ansible/roles and are divided given the functionality they provide, e.g: create ec2 instance (witihn the aws namespace), install and configure apache, install and configure mysql (for stacks like vpc + subnet + gateway Cloudfront module may be better for this). Roles don't have the same deployment/provisioning enviroment seggregation. This is as roles are seggregated by cloud providers (AKA namespaces). This structure aims to be able to house different cloud providers.
 
 We could add different cloud providers, data centers etc. under provisioning/environments/{{environment}} and the playbook/s will live as in the AWS use case.
 
