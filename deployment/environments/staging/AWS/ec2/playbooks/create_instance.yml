@@ -9,9 +9,6 @@
   # we will use include_vars
   # server_type is a var passed as an extra var to ansible_playbook (-e)
   # example playbook run: ansible-playbook -vvvv -e "env=staging,server_type=dbserver" create_instance.yml
-  tasks:
-    - name: include variables
-      include_vars: "ec2_vars/{{ env }}/{{ server_type }}.yml"
 
   roles:
     - ec2_create
