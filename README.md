@@ -5,7 +5,7 @@ The intention is to create a centralised but also well seggregated infrastructur
 
 inventory files: production and staging have different inventories
 new spun ec2 instances: are added to the specific environment's inventory file from within the playbook
-deleted ec2 instances: are deleted from the environment's inventory file
+deleted ec2 instances: are/should be deleted from the environment's inventory file also dynamically.
 
 The ec2 dynamic inventory script lives under the playbook directory, in this case
 ```
@@ -23,9 +23,13 @@ An example of playbook execution to provision instances in ec2 (cd first into th
 # ansible-playbook --private-key ~/.ssh/tricky-key-pair-ireland.pem -e "env=staging server_type=dbserver count=1" -vvvv create_instance.yml
 ```
 
-If you want to provision using roles in the playbook, then there is a demo role under the roles/ directory taken from http://allandenot.com/devops/2015/01/31/provisioning-ec2-hosts-with-ansible.html
-
 This repository just serves as a demo/poc of how you can organise your AWS's (and other cloud providers) Ansible code, avoiding decentralisation and providing a fair structure to let you scale your environments. Appart from that, the create_instance.yml playbook is fully functional :)
+
+UPDATE: the idea now is to have provisioning and deployment separated. Playbooks for deployment (newly span instances) will take the variables from ec2_vars/server.yml, being ec2_vars in the playbook directory (see directory tree). This allow for a seggragated structure where we would place up to date variables in ec2_vars depending on the server type (dbserver,proxyserver,etc.). These vars withe the extra vars we pass on playbook-execution time, will be taken by the role ec2_create.yml. The intention is to provide similar functionality to Hiera with Puppet.
+
+The provisioning has now its own directory tree, which would help us logically devide both, deployment and provision. When provisioning, as the deployed instances are added dynamically to the inventory files, we'd use host_vars and group_vars, not the ec2_vars. We may want to symlink these dirs, but that's sometihng I've not tried with Git (as we would have all this on Git) but I reckon it's completely possible.
+
+If you want to run the playbook to create ec2 instances make sure you edit the variables within files in ec2_vars.
 
 
 
