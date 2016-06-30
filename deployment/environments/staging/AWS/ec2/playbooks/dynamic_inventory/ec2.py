@@ -1,5 +1,108 @@
-#!/usr/bin/python
-# This file is part of Ansible
+#!/usr/bin/env python
+
+'''
+EC2 external inventory script
+=================================
+
+Generates inventory that Ansible can understand by making API request to
+AWS EC2 using the Boto library.
+
+NOTE: This script assumes Ansible is being executed where the environment
+variables needed for Boto have already been set:
+    export AWS_ACCESS_KEY_ID='AK123'
+    export AWS_SECRET_ACCESS_KEY='abc123'
+
+This script also assumes there is an ec2.ini file alongside it.  To specify a
+different path to ec2.ini, define the EC2_INI_PATH environment variable:
+
+    export EC2_INI_PATH=/path/to/my_ec2.ini
+
+If you're using eucalyptus you need to set the above variables and
+you need to define:
+
+    export EC2_URL=http://hostname_of_your_cc:port/services/Eucalyptus
+
+If you're using boto profiles (requires boto>=2.24.0) you can choose a profile
+using the --boto-profile command line argument (e.g. ec2.py --boto-profile prod) or using
+the AWS_PROFILE variable:
+
+    AWS_PROFILE=prod ansible-playbook -i ec2.py myplaybook.yml
+
+For more details, see: http://docs.pythonboto.org/en/latest/boto_config_tut.html
+
+When run against a specific host, this script returns the following variables:
+ - ec2_ami_launch_index
+ - ec2_architecture
+ - ec2_association
+ - ec2_attachTime
+ - ec2_attachment
+ - ec2_attachmentId
+ - ec2_client_token
+ - ec2_deleteOnTermination
+ - ec2_description
+ - ec2_deviceIndex
+ - ec2_dns_name
+ - ec2_eventsSet
+ - ec2_group_name
+ - ec2_hypervisor
+ - ec2_id
+ - ec2_image_id
+ - ec2_instanceState
+ - ec2_instance_type
+ - ec2_ipOwnerId
+ - ec2_ip_address
+ - ec2_item
+ - ec2_kernel
+ - ec2_key_name
+ - ec2_launch_time
+ - ec2_monitored
+ - ec2_monitoring
+ - ec2_networkInterfaceId
+ - ec2_ownerId
+ - ec2_persistent
+ - ec2_placement
+ - ec2_platform
+ - ec2_previous_state
+ - ec2_private_dns_name
+ - ec2_private_ip_address
+ - ec2_publicIp
+ - ec2_public_dns_name
+ - ec2_ramdisk
+ - ec2_reason
+ - ec2_region
+ - ec2_requester_id
+ - ec2_root_device_name
+ - ec2_root_device_type
+ - ec2_security_group_ids
+ - ec2_security_group_names
+ - ec2_shutdown_state
+ - ec2_sourceDestCheck
+ - ec2_spot_instance_request_id
+ - ec2_state
+ - ec2_state_code
+ - ec2_state_reason
+ - ec2_status
+ - ec2_subnet_id
+ - ec2_tenancy
+ - ec2_virtualization_type
+ - ec2_vpc_id
+
+These variables are pulled out of a boto.ec2.instance object. There is a lack of
+consistency with variable spellings (camelCase and underscores) since this
+just loops through all variables the object exposes. It is preferred to use the
+ones with underscores when multiple exist.
+
+In addition, if an instance has AWS Tags associated with it, each tag is a new
+variable named:
+ - ec2_tag_[Key] = [Value]
+
+Security groups are comma-separated in 'ec2_security_group_ids' and
+'ec2_security_group_names'.
+'''
+
+# (c) 2012, Peter Sankauskas
+#
+# This file is part of Ansible,
 #
 # Ansible is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -14,1511 +117,1313 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
-DOCUMENTATION = '''
----
-module: ec2
-short_description: create, terminate, start or stop an instance in ec2
-description:
-    - Creates or terminates ec2 instances.
-    - C(state=restarted) was added in 2.2
-version_added: "0.9"
-options:
-  key_name:
-    description:
-      - key pair to use on the instance
-    required: false
-    default: null
-    aliases: ['keypair']
-  group:
-    description:
-      - security group (or list of groups) to use with the instance
-    required: false
-    default: null
-    aliases: [ 'groups' ]
-  group_id:
-    version_added: "1.1"
-    description:
-      - security group id (or list of ids) to use with the instance
-    required: false
-    default: null
-    aliases: []
-  region:
-    version_added: "1.2"
-    description:
-      - The AWS region to use.  Must be specified if ec2_url is not used. If not specified then the value of the EC2_REGION environment variable, if any, is used. See U(http://docs.aws.amazon.com/general/latest/gr/rande.html#ec2_region)
-    required: false
-    default: null
-    aliases: [ 'aws_region', 'ec2_region' ]
-  zone:
-    version_added: "1.2"
-    description:
-      - AWS availability zone in which to launch the instance
-    required: false
-    default: null
-    aliases: [ 'aws_zone', 'ec2_zone' ]
-  instance_type:
-    description:
-      - instance type to use for the instance, see U(http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-types.html)
-    required: true
-    default: null
-    aliases: []
-  tenancy:
-    version_added: "1.9"
-    description:
-      - An instance with a tenancy of "dedicated" runs on single-tenant hardware and can only be launched into a VPC. Note that to use dedicated tenancy you MUST specify a vpc_subnet_id as well. Dedicated tenancy is not available for EC2 "micro" instances.
-    required: false
-    default: default
-    choices: [ "default", "dedicated" ]
-    aliases: []
-  spot_price:
-    version_added: "1.5"
-    description:
-      - Maximum spot price to bid, If not set a regular on-demand instance is requested. A spot request is made with this maximum bid. When it is filled, the instance is started.
-    required: false
-    default: null
-    aliases: []
-  spot_type:
-    version_added: "2.0"
-    description:
-      - Type of spot request; one of "one-time" or "persistent". Defaults to "one-time" if not supplied.
-    required: false
-    default: "one-time"
-    choices: [ "one-time", "persistent" ]
-    aliases: []
-  image:
-    description:
-       - I(ami) ID to use for the instance
-    required: true
-    default: null
-    aliases: []
-  kernel:
-    description:
-      - kernel I(eki) to use for the instance
-    required: false
-    default: null
-    aliases: []
-  ramdisk:
-    description:
-      - ramdisk I(eri) to use for the instance
-    required: false
-    default: null
-    aliases: []
-  wait:
-    description:
-      - wait for the instance to be 'running' before returning.  Does not wait for SSH, see 'wait_for' example for details.
-    required: false
-    default: "no"
-    choices: [ "yes", "no" ]
-    aliases: []
-  wait_timeout:
-    description:
-      - how long before wait gives up, in seconds
-    default: 300
-    aliases: []
-  spot_wait_timeout:
-    version_added: "1.5"
-    description:
-      - how long to wait for the spot instance request to be fulfilled
-    default: 600
-    aliases: []
-  count:
-    description:
-      - number of instances to launch
-    required: False
-    default: 1
-    aliases: []
-  monitoring:
-    version_added: "1.1"
-    description:
-      - enable detailed monitoring (CloudWatch) for instance
-    required: false
-    default: null
-    choices: [ "yes", "no" ]
-    aliases: []
-  user_data:
-    version_added: "0.9"
-    description:
-      - opaque blob of data which is made available to the ec2 instance
-    required: false
-    default: null
-    aliases: []
-  instance_tags:
-    version_added: "1.0"
-    description:
-      - a hash/dictionary of tags to add to the new instance or for starting/stopping instance by tag; '{"key":"value"}' and '{"key":"value","key":"value"}'
-    required: false
-    default: null
-    aliases: []
-  placement_group:
-    version_added: "1.3"
-    description:
-      - placement group for the instance when using EC2 Clustered Compute
-    required: false
-    default: null
-    aliases: []
-  vpc_subnet_id:
-    version_added: "1.1"
-    description:
-      - the subnet ID in which to launch the instance (VPC)
-    required: false
-    default: null
-    aliases: []
-  assign_public_ip:
-    version_added: "1.5"
-    description:
-      - when provisioning within vpc, assign a public IP address. Boto library must be 2.13.0+
-    required: false
-    default: null
-    choices: [ "yes", "no" ]
-    aliases: []
-  private_ip:
-    version_added: "1.2"
-    description:
-      - the private ip address to assign the instance (from the vpc subnet)
-    required: false
-    default: null
-    aliases: []
-  instance_profile_name:
-    version_added: "1.3"
-    description:
-      - Name of the IAM instance profile to use. Boto library must be 2.5.0+
-    required: false
-    default: null
-    aliases: []
-  instance_ids:
-    version_added: "1.3"
-    description:
-      - "list of instance ids, currently used for states: absent, running, stopped"
-    required: false
-    default: null
-    aliases: ['instance_id']
-  source_dest_check:
-    version_added: "1.6"
-    description:
-      - Enable or Disable the Source/Destination checks (for NAT instances and Virtual Routers)
-    required: false
-    default: yes
-    choices: [ "yes", "no" ]
-  termination_protection:
-    version_added: "2.0"
-    description:
-      - Enable or Disable the Termination Protection
-    required: false
-    default: no
-    choices: [ "yes", "no" ]
-  state:
-    version_added: "1.3"
-    description:
-      - create or terminate instances
-    required: false
-    default: 'present'
-    aliases: []
-    choices: ['present', 'absent', 'running', 'restarted', 'stopped']
-  volumes:
-    version_added: "1.5"
-    description:
-      - a list of hash/dictionaries of volumes to add to the new instance; '[{"key":"value", "key":"value"}]'; keys allowed are - device_name (str; required), delete_on_termination (bool; False), device_type (deprecated), ephemeral (str), encrypted (bool; False), snapshot (str), volume_type (str), iops (int) - device_type is deprecated use volume_type, iops must be set when volume_type='io1', ephemeral and snapshot are mutually exclusive.
-    required: false
-    default: null
-    aliases: []
-  ebs_optimized:
-    version_added: "1.6"
-    description:
-      - whether instance is using optimized EBS volumes, see U(http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSOptimized.html)
-    required: false
-    default: 'false'
-  exact_count:
-    version_added: "1.5"
-    description:
-      - An integer value which indicates how many instances that match the 'count_tag' parameter should be running. Instances are either created or terminated based on this value.
-    required: false
-    default: null
-    aliases: []
-  count_tag:
-    version_added: "1.5"
-    description:
-      - Used with 'exact_count' to determine how many nodes based on a specific tag criteria should be running.  This can be expressed in multiple ways and is shown in the EXAMPLES section.  For instance, one can request 25 servers that are tagged with "class=webserver". The specified tag must already exist or be passed in as the 'instance_tags' option.
-    required: false
-    default: null
-    aliases: []
-  network_interfaces:
-    version_added: "2.0"
-    description:
-      - A list of existing network interfaces to attach to the instance at launch. When specifying existing network interfaces, none of the assign_public_ip, private_ip, vpc_subnet_id, group, or group_id parameters may be used. (Those parameters are for creating a new network interface at launch.)
-    required: false
-    default: null
-    aliases: ['network_interface']
-  spot_launch_group:
-    version_added: "2.1"
-    description:
-      - Launch group for spot request, see U(http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/how-spot-instances-work.html#spot-launch-group)
-    required: false
-    default: null
+######################################################################
 
-author:
-    - "Tim Gerla (@tgerla)"
-    - "Lester Wade (@lwade)"
-    - "Seth Vidal"
-extends_documentation_fragment: aws
-'''
+import sys
+import os
+import argparse
+import re
+from time import time
+import boto
+from boto import ec2
+from boto import rds
+from boto import elasticache
+from boto import route53
+import six
 
-EXAMPLES = '''
-# Note: These examples do not set authentication details, see the AWS Guide for details.
-
-# Basic provisioning example
-- ec2:
-    key_name: mykey
-    instance_type: t2.micro
-    image: ami-123456
-    wait: yes
-    group: webserver
-    count: 3
-    vpc_subnet_id: subnet-29e63245
-    assign_public_ip: yes
-
-# Advanced example with tagging and CloudWatch
-- ec2:
-    key_name: mykey
-    group: databases
-    instance_type: t2.micro
-    image: ami-123456
-    wait: yes
-    wait_timeout: 500
-    count: 5
-    instance_tags:
-       db: postgres
-    monitoring: yes
-    vpc_subnet_id: subnet-29e63245
-    assign_public_ip: yes
-
-# Single instance with additional IOPS volume from snapshot and volume delete on termination
-- ec2:
-    key_name: mykey
-    group: webserver
-    instance_type: c3.medium
-    image: ami-123456
-    wait: yes
-    wait_timeout: 500
-    volumes:
-      - device_name: /dev/sdb
-        snapshot: snap-abcdef12
-        volume_type: io1
-        iops: 1000
-        volume_size: 100
-        delete_on_termination: true
-    monitoring: yes
-    vpc_subnet_id: subnet-29e63245
-    assign_public_ip: yes
-
-# Single instance with ssd gp2 root volume
-- ec2:
-    key_name: mykey
-    group: webserver
-    instance_type: c3.medium
-    image: ami-123456
-    wait: yes
-    wait_timeout: 500
-    volumes:
-      - device_name: /dev/xvda
-        volume_type: gp2
-        volume_size: 8
-    vpc_subnet_id: subnet-29e63245
-    assign_public_ip: yes
-    exact_count: 1
-
-# Multiple groups example
-- ec2:
-    key_name: mykey
-    group: ['databases', 'internal-services', 'sshable', 'and-so-forth']
-    instance_type: m1.large
-    image: ami-6e649707
-    wait: yes
-    wait_timeout: 500
-    count: 5
-    instance_tags:
-        db: postgres
-    monitoring: yes
-    vpc_subnet_id: subnet-29e63245
-    assign_public_ip: yes
-
-# Multiple instances with additional volume from snapshot
-- ec2:
-    key_name: mykey
-    group: webserver
-    instance_type: m1.large
-    image: ami-6e649707
-    wait: yes
-    wait_timeout: 500
-    count: 5
-    volumes:
-    - device_name: /dev/sdb
-      snapshot: snap-abcdef12
-      volume_size: 10
-    monitoring: yes
-    vpc_subnet_id: subnet-29e63245
-    assign_public_ip: yes
-
-# Dedicated tenancy example
-- local_action:
-    module: ec2
-    assign_public_ip: yes
-    group_id: sg-1dc53f72
-    key_name: mykey
-    image: ami-6e649707
-    instance_type: m1.small
-    tenancy: dedicated
-    vpc_subnet_id: subnet-29e63245
-    wait: yes
-
-# Spot instance example
-- ec2:
-    spot_price: 0.24
-    spot_wait_timeout: 600
-    keypair: mykey
-    group_id: sg-1dc53f72
-    instance_type: m1.small
-    image: ami-6e649707
-    wait: yes
-    vpc_subnet_id: subnet-29e63245
-    assign_public_ip: yes
-    spot_launch_group: report_generators
-
-# Examples using pre-existing network interfaces
-- ec2:
-    key_name: mykey
-    instance_type: t2.small
-    image: ami-f005ba11
-    network_interface: eni-deadbeef
-
-- ec2:
-    key_name: mykey
-    instance_type: t2.small
-    image: ami-f005ba11
-    network_interfaces: ['eni-deadbeef', 'eni-5ca1ab1e']
-
-# Launch instances, runs some tasks
-# and then terminate them
-
-- name: Create a sandbox instance
-  hosts: localhost
-  gather_facts: False
-  vars:
-    key_name: my_keypair
-    instance_type: m1.small
-    security_group: my_securitygroup
-    image: my_ami_id
-    region: us-east-1
-  tasks:
-    - name: Launch instance
-      ec2:
-         key_name: "{{ keypair }}"
-         group: "{{ security_group }}"
-         instance_type: "{{ instance_type }}"
-         image: "{{ image }}"
-         wait: true
-         region: "{{ region }}"
-         vpc_subnet_id: subnet-29e63245
-         assign_public_ip: yes
-      register: ec2
-    - name: Add new instance to host group
-      add_host: hostname={{ item.public_ip }} groupname=launched
-      with_items: ec2.instances
-    - name: Wait for SSH to come up
-      wait_for: host={{ item.public_dns_name }} port=22 delay=60 timeout=320 state=started
-      with_items: ec2.instances
-
-- name: Configure instance(s)
-  hosts: launched
-  become: True
-  gather_facts: True
-  roles:
-    - my_awesome_role
-    - my_awesome_test
-
-- name: Terminate instances
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Terminate instances that were previously launched
-      ec2:
-        state: 'absent'
-        instance_ids: '{{ ec2.instance_ids }}'
-
-# Start a few existing instances, run some tasks
-# and stop the instances
-
-- name: Start sandbox instances
-  hosts: localhost
-  gather_facts: false
-  connection: local
-  vars:
-    instance_ids:
-      - 'i-xxxxxx'
-      - 'i-xxxxxx'
-      - 'i-xxxxxx'
-    region: us-east-1
-  tasks:
-    - name: Start the sandbox instances
-      ec2:
-        instance_ids: '{{ instance_ids }}'
-        region: '{{ region }}'
-        state: running
-        wait: True
-        vpc_subnet_id: subnet-29e63245
-        assign_public_ip: yes
-  roles:
-    - do_neat_stuff
-    - do_more_neat_stuff
-
-- name: Stop sandbox instances
-  hosts: localhost
-  gather_facts: false
-  connection: local
-  vars:
-    instance_ids:
-      - 'i-xxxxxx'
-      - 'i-xxxxxx'
-      - 'i-xxxxxx'
-    region: us-east-1
-  tasks:
-    - name: Stop the sandbox instances
-      ec2:
-        instance_ids: '{{ instance_ids }}'
-        region: '{{ region }}'
-        state: stopped
-        wait: True
-        vpc_subnet_id: subnet-29e63245
-        assign_public_ip: yes
-
-#
-# Start stopped instances specified by tag
-#
-- local_action:
-    module: ec2
-    instance_tags:
-        Name: ExtraPower
-    state: running
-
-#
-# Restart instances specified by tag
-#
-- local_action:
-    module: ec2
-    instance_tags:
-        Name: ExtraPower
-    state: restarted
-
-#
-# Enforce that 5 instances with a tag "foo" are running
-# (Highly recommended!)
-#
-
-- ec2:
-    key_name: mykey
-    instance_type: c1.medium
-    image: ami-40603AD1
-    wait: yes
-    group: webserver
-    instance_tags:
-        foo: bar
-    exact_count: 5
-    count_tag: foo
-    vpc_subnet_id: subnet-29e63245
-    assign_public_ip: yes
-
-#
-# Enforce that 5 running instances named "database" with a "dbtype" of "postgres"
-#
-
-- ec2:
-    key_name: mykey
-    instance_type: c1.medium
-    image: ami-40603AD1
-    wait: yes
-    group: webserver
-    instance_tags:
-        Name: database
-        dbtype: postgres
-    exact_count: 5
-    count_tag:
-        Name: database
-        dbtype: postgres
-    vpc_subnet_id: subnet-29e63245
-    assign_public_ip: yes
-
-#
-# count_tag complex argument examples
-#
-
-    # instances with tag foo
-    count_tag:
-        foo:
-
-    # instances with tag foo=bar
-    count_tag:
-        foo: bar
-
-    # instances with tags foo=bar & baz
-    count_tag:
-        foo: bar
-        baz:
-
-    # instances with tags foo & bar & baz=bang
-    count_tag:
-        - foo
-        - bar
-        - baz: bang
-
-'''
-
-import time
-from ast import literal_eval
+from six.moves import configparser
+from collections import defaultdict
 
 try:
-    import boto.ec2
-    from boto.ec2.blockdevicemapping import BlockDeviceType, BlockDeviceMapping
-    from boto.exception import EC2ResponseError
-    from boto.vpc import VPCConnection
-    HAS_BOTO = True
+    import json
 except ImportError:
-    HAS_BOTO = False
+    import simplejson as json
 
 
-def find_running_instances_by_count_tag(module, ec2, count_tag, zone=None):
+class Ec2Inventory(object):
 
-    # get reservations for instances that match tag(s) and are running
-    reservations = get_reservations(module, ec2, tags=count_tag, state="running", zone=zone)
+    def _empty_inventory(self):
+        return {"_meta" : {"hostvars" : {}}}
 
-    instances = []
-    for res in reservations:
-        if hasattr(res, 'instances'):
-            for inst in res.instances:
-                instances.append(inst)
+    def __init__(self):
+        ''' Main execution path '''
 
-    return reservations, instances
+        # Inventory grouped by instance IDs, tags, security groups, regions,
+        # and availability zones
+        self.inventory = self._empty_inventory()
+
+        # Index of hostname (address) to instance ID
+        self.index = {}
+
+        # Boto profile to use (if any)
+        self.boto_profile = None
+
+        # AWS credentials.
+        self.credentials = {}
+
+        # Read settings and parse CLI arguments
+        self.parse_cli_args()
+        self.read_settings()
+
+        # Make sure that profile_name is not passed at all if not set
+        # as pre 2.24 boto will fall over otherwise
+        if self.boto_profile:
+            if not hasattr(boto.ec2.EC2Connection, 'profile_name'):
+                self.fail_with_error("boto version must be >= 2.24 to use profile")
+
+        # Cache
+        if self.args.refresh_cache:
+            self.do_api_calls_update_cache()
+        elif not self.is_cache_valid():
+            self.do_api_calls_update_cache()
+
+        # Data to print
+        if self.args.host:
+            data_to_print = self.get_host_info()
+
+        elif self.args.list:
+            # Display list of instances for inventory
+            if self.inventory == self._empty_inventory():
+                data_to_print = self.get_inventory_from_cache()
+            else:
+                data_to_print = self.json_format_dict(self.inventory, True)
+
+        print(data_to_print)
 
 
-def _set_none_to_blank(dictionary):
-    result = dictionary
-    for k in result.iterkeys():
-        if type(result[k]) == dict:
-            result[k] = _set_none_to_blank(result[k])
-        elif not result[k]:
-            result[k] = ""
-    return result
+    def is_cache_valid(self):
+        ''' Determines if the cache files have expired, or if it is still valid '''
 
+        if os.path.isfile(self.cache_path_cache):
+            mod_time = os.path.getmtime(self.cache_path_cache)
+            current_time = time()
+            if (mod_time + self.cache_max_age) > current_time:
+                if os.path.isfile(self.cache_path_index):
+                    return True
 
-def get_reservations(module, ec2, tags=None, state=None, zone=None):
-
-    # TODO: filters do not work with tags that have underscores
-    filters = dict()
-
-    if tags is not None:
-
-        if type(tags) is str:
-            try:
-                tags = literal_eval(tags)
-            except:
-                pass
-
-        # if string, we only care that a tag of that name exists
-        if type(tags) is str:
-            filters.update({"tag-key": tags})
-
-        # if list, append each item to filters
-        if type(tags) is list:
-            for x in tags:
-                if type(x) is dict:
-                    x = _set_none_to_blank(x)
-                    filters.update(dict(("tag:"+tn, tv) for (tn,tv) in x.iteritems()))
-                else:
-                    filters.update({"tag-key": x})
-
-        # if dict, add the key and value to the filter
-        if type(tags) is dict:
-            tags = _set_none_to_blank(tags)
-            filters.update(dict(("tag:"+tn, tv) for (tn,tv) in tags.iteritems()))
-
-    if state:
-        # http://stackoverflow.com/questions/437511/what-are-the-valid-instancestates-for-the-amazon-ec2-api
-        filters.update({'instance-state-name': state})
-
-    if zone:
-        filters.update({'availability-zone': zone})
-
-    results = ec2.get_all_instances(filters=filters)
-
-    return results
-
-def get_instance_info(inst):
-    """
-    Retrieves instance information from an instance
-    ID and returns it as a dictionary
-    """
-    instance_info = {'id': inst.id,
-                     'ami_launch_index': inst.ami_launch_index,
-                     'private_ip': inst.private_ip_address,
-                     'private_dns_name': inst.private_dns_name,
-                     'public_ip': inst.ip_address,
-                     'dns_name': inst.dns_name,
-                     'public_dns_name': inst.public_dns_name,
-                     'state_code': inst.state_code,
-                     'architecture': inst.architecture,
-                     'image_id': inst.image_id,
-                     'key_name': inst.key_name,
-                     'placement': inst.placement,
-                     'region': inst.placement[:-1],
-                     'kernel': inst.kernel,
-                     'ramdisk': inst.ramdisk,
-                     'launch_time': inst.launch_time,
-                     'instance_type': inst.instance_type,
-                     'root_device_type': inst.root_device_type,
-                     'root_device_name': inst.root_device_name,
-                     'state': inst.state,
-                     'hypervisor': inst.hypervisor,
-                     'tags': inst.tags,
-                     'groups': dict((group.id, group.name) for group in inst.groups),
-                     }
-    try:
-        instance_info['virtualization_type'] = getattr(inst,'virtualization_type')
-    except AttributeError:
-        instance_info['virtualization_type'] = None
-
-    try:
-        instance_info['ebs_optimized'] = getattr(inst, 'ebs_optimized')
-    except AttributeError:
-        instance_info['ebs_optimized'] = False
-
-    try:
-        bdm_dict = {}
-        bdm = getattr(inst, 'block_device_mapping')
-        for device_name in bdm.keys():
-            bdm_dict[device_name] = {
-                'status': bdm[device_name].status,
-                'volume_id': bdm[device_name].volume_id,
-                'delete_on_termination': bdm[device_name].delete_on_termination
-            }
-        instance_info['block_device_mapping'] = bdm_dict
-    except AttributeError:
-        instance_info['block_device_mapping'] = False
-
-    try:
-        instance_info['tenancy'] = getattr(inst, 'placement_tenancy')
-    except AttributeError:
-        instance_info['tenancy'] = 'default'
-
-    return instance_info
-
-def boto_supports_associate_public_ip_address(ec2):
-    """
-    Check if Boto library has associate_public_ip_address in the NetworkInterfaceSpecification
-    class. Added in Boto 2.13.0
-
-    ec2: authenticated ec2 connection object
-
-    Returns:
-        True if Boto library accepts associate_public_ip_address argument, else false
-    """
-
-    try:
-        network_interface = boto.ec2.networkinterface.NetworkInterfaceSpecification()
-        getattr(network_interface, "associate_public_ip_address")
-        return True
-    except AttributeError:
         return False
 
-def boto_supports_profile_name_arg(ec2):
-    """
-    Check if Boto library has instance_profile_name argument. instance_profile_name has been added in Boto 2.5.0
 
-    ec2: authenticated ec2 connection object
-
-    Returns:
-        True if Boto library accept instance_profile_name argument, else false
-    """
-    run_instances_method = getattr(ec2, 'run_instances')
-    return 'instance_profile_name' in run_instances_method.func_code.co_varnames
-
-def create_block_device(module, ec2, volume):
-    # Not aware of a way to determine this programatically
-    # http://aws.amazon.com/about-aws/whats-new/2013/10/09/ebs-provisioned-iops-maximum-iops-gb-ratio-increased-to-30-1/
-    MAX_IOPS_TO_SIZE_RATIO = 30
-
-    # device_type has been used historically to represent volume_type,
-    # however ec2_vol uses volume_type, as does the BlockDeviceType, so
-    # we add handling for either/or but not both
-    if all(key in volume for key in ['device_type','volume_type']):
-        module.fail_json(msg = 'device_type is a deprecated name for volume_type. Do not use both device_type and volume_type')
-
-    # get whichever one is set, or NoneType if neither are set
-    volume_type = volume.get('device_type') or volume.get('volume_type')
-
-    if 'snapshot' not in volume and 'ephemeral' not in volume:
-        if 'volume_size' not in volume:
-            module.fail_json(msg = 'Size must be specified when creating a new volume or modifying the root volume')
-    if 'snapshot' in volume:
-        if volume_type == 'io1' and 'iops' not in volume:
-            module.fail_json(msg = 'io1 volumes must have an iops value set')
-        if 'iops' in volume:
-            snapshot = ec2.get_all_snapshots(snapshot_ids=[volume['snapshot']])[0]
-            size = volume.get('volume_size', snapshot.volume_size)
-            if int(volume['iops']) > MAX_IOPS_TO_SIZE_RATIO * size:
-                module.fail_json(msg = 'IOPS must be at most %d times greater than size' % MAX_IOPS_TO_SIZE_RATIO)
-        if 'encrypted' in volume:
-            module.fail_json(msg = 'You can not set encyrption when creating a volume from a snapshot')
-    if 'ephemeral' in volume:
-        if 'snapshot' in volume:
-            module.fail_json(msg = 'Cannot set both ephemeral and snapshot')
-    return BlockDeviceType(snapshot_id=volume.get('snapshot'),
-                           ephemeral_name=volume.get('ephemeral'),
-                           size=volume.get('volume_size'),
-                           volume_type=volume_type,
-                           delete_on_termination=volume.get('delete_on_termination', False),
-                           iops=volume.get('iops'),
-                           encrypted=volume.get('encrypted', None))
-
-def boto_supports_param_in_spot_request(ec2, param):
-    """
-    Check if Boto library has a <param> in its request_spot_instances() method. For example, the placement_group parameter wasn't added until 2.3.0.
-
-    ec2: authenticated ec2 connection object
-
-    Returns:
-        True if boto library has the named param as an argument on the request_spot_instances method, else False
-    """
-    method = getattr(ec2, 'request_spot_instances')
-    return param in method.func_code.co_varnames
-
-def enforce_count(module, ec2, vpc):
-
-    exact_count = module.params.get('exact_count')
-    count_tag = module.params.get('count_tag')
-    zone = module.params.get('zone')
-
-    # fail here if the exact count was specified without filtering
-    # on a tag, as this may lead to a undesired removal of instances
-    if exact_count and count_tag is None:
-        module.fail_json(msg="you must use the 'count_tag' option with exact_count")
-
-    reservations, instances = find_running_instances_by_count_tag(module, ec2, count_tag, zone)
-
-    changed = None
-    checkmode = False
-    instance_dict_array = []
-    changed_instance_ids = None
-
-    if len(instances) == exact_count:
-        changed = False
-    elif len(instances) < exact_count:
-        changed = True
-        to_create = exact_count - len(instances)
-        if not checkmode:
-            (instance_dict_array, changed_instance_ids, changed) \
-                = create_instances(module, ec2, vpc, override_count=to_create)
-
-            for inst in instance_dict_array:
-                instances.append(inst)
-    elif len(instances) > exact_count:
-        changed = True
-        to_remove = len(instances) - exact_count
-        if not checkmode:
-            all_instance_ids = sorted([ x.id for x in instances ])
-            remove_ids = all_instance_ids[0:to_remove]
-
-            instances = [ x for x in instances if x.id not in remove_ids]
-
-            (changed, instance_dict_array, changed_instance_ids) \
-                = terminate_instances(module, ec2, remove_ids)
-            terminated_list = []
-            for inst in instance_dict_array:
-                inst['state'] = "terminated"
-                terminated_list.append(inst)
-            instance_dict_array = terminated_list
-
-    # ensure all instances are dictionaries
-    all_instances = []
-    for inst in instances:
-        if type(inst) is not dict:
-            inst = get_instance_info(inst)
-        all_instances.append(inst)
-
-    return (all_instances, instance_dict_array, changed_instance_ids, changed)
-
-
-def create_instances(module, ec2, vpc, override_count=None):
-    """
-    Creates new instances
-
-    module : AnsibleModule object
-    ec2: authenticated ec2 connection object
-
-    Returns:
-        A list of dictionaries with instance information
-        about the instances that were launched
-    """
-
-    key_name = module.params.get('key_name')
-    id = module.params.get('id')
-    group_name = module.params.get('group')
-    group_id = module.params.get('group_id')
-    zone = module.params.get('zone')
-    instance_type = module.params.get('instance_type')
-    tenancy = module.params.get('tenancy')
-    spot_price = module.params.get('spot_price')
-    spot_type = module.params.get('spot_type')
-    image = module.params.get('image')
-    if override_count:
-        count = override_count
-    else:
-        count = module.params.get('count')
-    monitoring = module.params.get('monitoring')
-    kernel = module.params.get('kernel')
-    ramdisk = module.params.get('ramdisk')
-    wait = module.params.get('wait')
-    wait_timeout = int(module.params.get('wait_timeout'))
-    spot_wait_timeout = int(module.params.get('spot_wait_timeout'))
-    placement_group = module.params.get('placement_group')
-    user_data = module.params.get('user_data')
-    instance_tags = module.params.get('instance_tags')
-    vpc_subnet_id = module.params.get('vpc_subnet_id')
-    assign_public_ip = module.boolean(module.params.get('assign_public_ip'))
-    private_ip = module.params.get('private_ip')
-    instance_profile_name = module.params.get('instance_profile_name')
-    volumes = module.params.get('volumes')
-    ebs_optimized = module.params.get('ebs_optimized')
-    exact_count = module.params.get('exact_count')
-    count_tag = module.params.get('count_tag')
-    source_dest_check = module.boolean(module.params.get('source_dest_check'))
-    termination_protection = module.boolean(module.params.get('termination_protection'))
-    network_interfaces = module.params.get('network_interfaces')
-    spot_launch_group = module.params.get('spot_launch_group')
-
-    # group_id and group_name are exclusive of each other
-    if group_id and group_name:
-        module.fail_json(msg = str("Use only one type of parameter (group_name) or (group_id)"))
-
-    vpc_id = None
-    if vpc_subnet_id:
-        if not vpc:
-            module.fail_json(msg="region must be specified")
+    def read_settings(self):
+        ''' Reads the settings from the ec2.ini file '''
+        if six.PY3:
+            config = configparser.ConfigParser()
         else:
-            vpc_id = vpc.get_all_subnets(subnet_ids=[vpc_subnet_id])[0].vpc_id
-    else:
-        vpc_id = None
+            config = configparser.SafeConfigParser()
+        ec2_default_ini_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'ec2.ini')
+        ec2_ini_path = os.path.expanduser(os.path.expandvars(os.environ.get('EC2_INI_PATH', ec2_default_ini_path)))
+        config.read(ec2_ini_path)
 
-    try:
-        # Here we try to lookup the group id from the security group name - if group is set.
-        if group_name:
-            if vpc_id:
-                grp_details = ec2.get_all_security_groups(filters={'vpc_id': vpc_id})
+        # is eucalyptus?
+        self.eucalyptus_host = None
+        self.eucalyptus = False
+        if config.has_option('ec2', 'eucalyptus'):
+            self.eucalyptus = config.getboolean('ec2', 'eucalyptus')
+        if self.eucalyptus and config.has_option('ec2', 'eucalyptus_host'):
+            self.eucalyptus_host = config.get('ec2', 'eucalyptus_host')
+
+        # Regions
+        self.regions = []
+        configRegions = config.get('ec2', 'regions')
+        configRegions_exclude = config.get('ec2', 'regions_exclude')
+        if (configRegions == 'all'):
+            if self.eucalyptus_host:
+                self.regions.append(boto.connect_euca(host=self.eucalyptus_host).region.name, **self.credentials)
             else:
-                grp_details = ec2.get_all_security_groups()
-            if isinstance(group_name, basestring):
-                group_name = [group_name]
-            unmatched = set(group_name).difference(str(grp.name) for grp in grp_details)
-            if len(unmatched) > 0:
-                module.fail_json(msg="The following group names are not valid: %s" % ', '.join(unmatched))
-            group_id = [ str(grp.id) for grp in grp_details if str(grp.name) in group_name ]
-        # Now we try to lookup the group id testing if group exists.
-        elif group_id:
-            #wrap the group_id in a list if it's not one already
-            if isinstance(group_id, basestring):
-                group_id = [group_id]
-            grp_details = ec2.get_all_security_groups(group_ids=group_id)
-            group_name = [grp_item.name for grp_item in grp_details]
-    except boto.exception.NoAuthHandlerFound, e:
-            module.fail_json(msg = str(e))
+                for regionInfo in ec2.regions():
+                    if regionInfo.name not in configRegions_exclude:
+                        self.regions.append(regionInfo.name)
+        else:
+            self.regions = configRegions.split(",")
 
-    # Lookup any instances that much our run id.
+        # Destination addresses
+        self.destination_variable = config.get('ec2', 'destination_variable')
+        self.vpc_destination_variable = config.get('ec2', 'vpc_destination_variable')
 
-    running_instances = []
-    count_remaining = int(count)
+        if config.has_option('ec2', 'hostname_variable'):
+            self.hostname_variable = config.get('ec2', 'hostname_variable')
+        else:
+            self.hostname_variable = None
 
-    if id != None:
-        filter_dict = {'client-token':id, 'instance-state-name' : 'running'}
-        previous_reservations = ec2.get_all_instances(None, filter_dict)
-        for res in previous_reservations:
-            for prev_instance in res.instances:
-                running_instances.append(prev_instance)
-        count_remaining = count_remaining - len(running_instances)
+        if config.has_option('ec2', 'destination_format') and \
+           config.has_option('ec2', 'destination_format_tags'):
+            self.destination_format = config.get('ec2', 'destination_format')
+            self.destination_format_tags = config.get('ec2', 'destination_format_tags').split(',')
+        else:
+            self.destination_format = None
+            self.destination_format_tags = None
 
-    # Both min_count and max_count equal count parameter. This means the launch request is explicit (we want count, or fail) in how many instances we want.
+        # Route53
+        self.route53_enabled = config.getboolean('ec2', 'route53')
+        self.route53_excluded_zones = []
+        if config.has_option('ec2', 'route53_excluded_zones'):
+            self.route53_excluded_zones.extend(
+                config.get('ec2', 'route53_excluded_zones', '').split(','))
 
-    if count_remaining == 0:
-        changed = False
-    else:
-        changed = True
+        # Include RDS instances?
+        self.rds_enabled = True
+        if config.has_option('ec2', 'rds'):
+            self.rds_enabled = config.getboolean('ec2', 'rds')
+
+        # Include ElastiCache instances?
+        self.elasticache_enabled = True
+        if config.has_option('ec2', 'elasticache'):
+            self.elasticache_enabled = config.getboolean('ec2', 'elasticache')
+
+        # Return all EC2 instances?
+        if config.has_option('ec2', 'all_instances'):
+            self.all_instances = config.getboolean('ec2', 'all_instances')
+        else:
+            self.all_instances = False
+
+        # Instance states to be gathered in inventory. Default is 'running'.
+        # Setting 'all_instances' to 'yes' overrides this option.
+        ec2_valid_instance_states = [
+            'pending',
+            'running',
+            'shutting-down',
+            'terminated',
+            'stopping',
+            'stopped'
+        ]
+        self.ec2_instance_states = []
+        if self.all_instances:
+            self.ec2_instance_states = ec2_valid_instance_states
+        elif config.has_option('ec2', 'instance_states'):
+          for instance_state in config.get('ec2', 'instance_states').split(','):
+            instance_state = instance_state.strip()
+            if instance_state not in ec2_valid_instance_states:
+              continue
+            self.ec2_instance_states.append(instance_state)
+        else:
+          self.ec2_instance_states = ['running']
+
+        # Return all RDS instances? (if RDS is enabled)
+        if config.has_option('ec2', 'all_rds_instances') and self.rds_enabled:
+            self.all_rds_instances = config.getboolean('ec2', 'all_rds_instances')
+        else:
+            self.all_rds_instances = False
+
+        # Return all ElastiCache replication groups? (if ElastiCache is enabled)
+        if config.has_option('ec2', 'all_elasticache_replication_groups') and self.elasticache_enabled:
+            self.all_elasticache_replication_groups = config.getboolean('ec2', 'all_elasticache_replication_groups')
+        else:
+            self.all_elasticache_replication_groups = False
+
+        # Return all ElastiCache clusters? (if ElastiCache is enabled)
+        if config.has_option('ec2', 'all_elasticache_clusters') and self.elasticache_enabled:
+            self.all_elasticache_clusters = config.getboolean('ec2', 'all_elasticache_clusters')
+        else:
+            self.all_elasticache_clusters = False
+
+        # Return all ElastiCache nodes? (if ElastiCache is enabled)
+        if config.has_option('ec2', 'all_elasticache_nodes') and self.elasticache_enabled:
+            self.all_elasticache_nodes = config.getboolean('ec2', 'all_elasticache_nodes')
+        else:
+            self.all_elasticache_nodes = False
+
+        # boto configuration profile (prefer CLI argument)
+        self.boto_profile = self.args.boto_profile
+        if config.has_option('ec2', 'boto_profile') and not self.boto_profile:
+            self.boto_profile = config.get('ec2', 'boto_profile')
+
+        # AWS credentials (prefer environment variables)
+        if not (self.boto_profile or os.environ.get('AWS_ACCESS_KEY_ID') or
+                os.environ.get('AWS_PROFILE')):
+            if config.has_option('credentials', 'aws_access_key_id'):
+                aws_access_key_id = config.get('credentials', 'aws_access_key_id')
+            else:
+                aws_access_key_id = None
+            if config.has_option('credentials', 'aws_secret_access_key'):
+                aws_secret_access_key = config.get('credentials', 'aws_secret_access_key')
+            else:
+                aws_secret_access_key = None
+            if config.has_option('credentials', 'aws_security_token'):
+                aws_security_token = config.get('credentials', 'aws_security_token')
+            else:
+                aws_security_token = None
+            if aws_access_key_id:
+                self.credentials = {
+                    'aws_access_key_id': aws_access_key_id,
+                    'aws_secret_access_key': aws_secret_access_key
+                }
+                if aws_security_token:
+                    self.credentials['security_token'] = aws_security_token
+
+        # Cache related
+        cache_dir = os.path.expanduser(config.get('ec2', 'cache_path'))
+        if self.boto_profile:
+            cache_dir = os.path.join(cache_dir, 'profile_' + self.boto_profile)
+        if not os.path.exists(cache_dir):
+            os.makedirs(cache_dir)
+
+        cache_name = 'ansible-ec2'
+        aws_profile = lambda: (self.boto_profile or
+                               os.environ.get('AWS_PROFILE') or
+                               os.environ.get('AWS_ACCESS_KEY_ID') or
+                               self.credentials.get('aws_access_key_id', None))
+        if aws_profile():
+            cache_name = '%s-%s' % (cache_name, aws_profile())
+        self.cache_path_cache = cache_dir + "/%s.cache" % cache_name
+        self.cache_path_index = cache_dir + "/%s.index" % cache_name
+        self.cache_max_age = config.getint('ec2', 'cache_max_age')
+
+        if config.has_option('ec2', 'expand_csv_tags'):
+            self.expand_csv_tags = config.getboolean('ec2', 'expand_csv_tags')
+        else:
+            self.expand_csv_tags = False
+
+        # Configure nested groups instead of flat namespace.
+        if config.has_option('ec2', 'nested_groups'):
+            self.nested_groups = config.getboolean('ec2', 'nested_groups')
+        else:
+            self.nested_groups = False
+
+        # Replace dash or not in group names
+        if config.has_option('ec2', 'replace_dash_in_groups'):
+            self.replace_dash_in_groups = config.getboolean('ec2', 'replace_dash_in_groups')
+        else:
+            self.replace_dash_in_groups = True
+
+        # Configure which groups should be created.
+        group_by_options = [
+            'group_by_instance_id',
+            'group_by_region',
+            'group_by_availability_zone',
+            'group_by_ami_id',
+            'group_by_instance_type',
+            'group_by_key_pair',
+            'group_by_vpc_id',
+            'group_by_security_group',
+            'group_by_tag_keys',
+            'group_by_tag_none',
+            'group_by_route53_names',
+            'group_by_rds_engine',
+            'group_by_rds_parameter_group',
+            'group_by_elasticache_engine',
+            'group_by_elasticache_cluster',
+            'group_by_elasticache_parameter_group',
+            'group_by_elasticache_replication_group',
+        ]
+        for option in group_by_options:
+            if config.has_option('ec2', option):
+                setattr(self, option, config.getboolean('ec2', option))
+            else:
+                setattr(self, option, True)
+
+        # Do we need to just include hosts that match a pattern?
         try:
-            params = {'image_id': image,
-                      'key_name': key_name,
-                      'monitoring_enabled': monitoring,
-                      'placement': zone,
-                      'instance_type': instance_type,
-                      'kernel_id': kernel,
-                      'ramdisk_id': ramdisk,
-                      'user_data': user_data}
-
-            if ebs_optimized:
-              params['ebs_optimized'] = ebs_optimized
-
-            # 'tenancy' always has a default value, but it is not a valid parameter for spot instance resquest
-            if not spot_price:
-              params['tenancy'] = tenancy
-
-            if boto_supports_profile_name_arg(ec2):
-                params['instance_profile_name'] = instance_profile_name
+            pattern_include = config.get('ec2', 'pattern_include')
+            if pattern_include and len(pattern_include) > 0:
+                self.pattern_include = re.compile(pattern_include)
             else:
-                if instance_profile_name is not None:
-                    module.fail_json(
-                        msg="instance_profile_name parameter requires Boto version 2.5.0 or higher")
+                self.pattern_include = None
+        except configparser.NoOptionError:
+            self.pattern_include = None
 
-            if assign_public_ip:
-                if not boto_supports_associate_public_ip_address(ec2):
-                    module.fail_json(
-                        msg="assign_public_ip parameter requires Boto version 2.13.0 or higher.")
-                elif not vpc_subnet_id:
-                    module.fail_json(
-                        msg="assign_public_ip only available with vpc_subnet_id")
-
-                else:
-                    if private_ip:
-                        interface = boto.ec2.networkinterface.NetworkInterfaceSpecification(
-                            subnet_id=vpc_subnet_id,
-                            private_ip_address=private_ip,
-                            groups=group_id,
-                            associate_public_ip_address=assign_public_ip)
-                    else:
-                        interface = boto.ec2.networkinterface.NetworkInterfaceSpecification(
-                            subnet_id=vpc_subnet_id,
-                            groups=group_id,
-                            associate_public_ip_address=assign_public_ip)
-                    interfaces = boto.ec2.networkinterface.NetworkInterfaceCollection(interface)
-                    params['network_interfaces'] = interfaces
+        # Do we need to exclude hosts that match a pattern?
+        try:
+            pattern_exclude = config.get('ec2', 'pattern_exclude');
+            if pattern_exclude and len(pattern_exclude) > 0:
+                self.pattern_exclude = re.compile(pattern_exclude)
             else:
-                if network_interfaces:
-                    if isinstance(network_interfaces, basestring):
-                        network_interfaces = [network_interfaces]
-                    interfaces = []
-                    for i, network_interface_id in enumerate(network_interfaces):
-                        interface = boto.ec2.networkinterface.NetworkInterfaceSpecification(
-                            network_interface_id=network_interface_id,
-                            device_index=i)
-                        interfaces.append(interface)
-                    params['network_interfaces'] = \
-                        boto.ec2.networkinterface.NetworkInterfaceCollection(*interfaces)
-                else:
-                    params['subnet_id'] = vpc_subnet_id
-                    if vpc_subnet_id:
-                        params['security_group_ids'] = group_id
-                    else:
-                        params['security_groups'] = group_name
+                self.pattern_exclude = None
+        except configparser.NoOptionError:
+            self.pattern_exclude = None
 
-            if volumes:
-                bdm = BlockDeviceMapping()
-                for volume in volumes:
-                    if 'device_name' not in volume:
-                        module.fail_json(msg = 'Device name must be set for volume')
-                    # Minimum volume size is 1GB. We'll use volume size explicitly set to 0
-                    # to be a signal not to create this volume
-                    if 'volume_size' not in volume or int(volume['volume_size']) > 0:
-                        bdm[volume['device_name']] = create_block_device(module, ec2, volume)
+        # Instance filters (see boto and EC2 API docs). Ignore invalid filters.
+        self.ec2_instance_filters = defaultdict(list)
+        if config.has_option('ec2', 'instance_filters'):
 
-                params['block_device_map'] = bdm
+            filters = [f for f in config.get('ec2', 'instance_filters').split(',') if f]
 
-            # check to see if we're using spot pricing first before starting instances
-            if not spot_price:
-                if assign_public_ip and private_ip:
-                    params.update(dict(
-                      min_count          = count_remaining,
-                      max_count          = count_remaining,
-                      client_token       = id,
-                      placement_group    = placement_group,
-                    ))
-                else:
-                    params.update(dict(
-                      min_count          = count_remaining,
-                      max_count          = count_remaining,
-                      client_token       = id,
-                      placement_group    = placement_group,
-                      private_ip_address = private_ip,
-                    ))
-
-                res = ec2.run_instances(**params)
-                instids = [ i.id for i in res.instances ]
-                while True:
-                    try:
-                        ec2.get_all_instances(instids)
-                        break
-                    except boto.exception.EC2ResponseError as e:
-                        if "<Code>InvalidInstanceID.NotFound</Code>" in str(e):
-                            # there's a race between start and get an instance
-                            continue
-                        else:
-                            module.fail_json(msg = str(e))
-
-                # The instances returned through ec2.run_instances above can be in
-                # terminated state due to idempotency. See commit 7f11c3d for a complete
-                # explanation.
-                terminated_instances = [
-                    str(instance.id) for instance in res.instances if instance.state == 'terminated'
-                ]
-                if terminated_instances:
-                    module.fail_json(msg = "Instances with id(s) %s " % terminated_instances +
-                                           "were created previously but have since been terminated - " +
-                                           "use a (possibly different) 'instanceid' parameter")
-
-            else:
-                if private_ip:
-                    module.fail_json(
-                        msg='private_ip only available with on-demand (non-spot) instances')
-                if boto_supports_param_in_spot_request(ec2, 'placement_group'):
-                    params['placement_group'] = placement_group
-                elif placement_group :
-                        module.fail_json(
-                            msg="placement_group parameter requires Boto version 2.3.0 or higher.")
-
-                if spot_launch_group and isinstance(spot_launch_group, basestring):
-                    params['launch_group'] = spot_launch_group
-
-                params.update(dict(
-                    count = count_remaining,
-                    type = spot_type,
-                ))
-                res = ec2.request_spot_instances(spot_price, **params)
-
-                # Now we have to do the intermediate waiting
-                if wait:
-                    spot_req_inst_ids = dict()
-                    spot_wait_timeout = time.time() + spot_wait_timeout
-                    while spot_wait_timeout > time.time():
-                        reqs = ec2.get_all_spot_instance_requests()
-                        for sirb in res:
-                            if sirb.id in spot_req_inst_ids:
-                                continue
-                            for sir in reqs:
-                                if sir.id == sirb.id and sir.instance_id is not None:
-                                    spot_req_inst_ids[sirb.id] = sir.instance_id
-                        if len(spot_req_inst_ids) < count:
-                            time.sleep(5)
-                        else:
-                            break
-                    if spot_wait_timeout <= time.time():
-                        module.fail_json(msg = "wait for spot requests timeout on %s" % time.asctime())
-                    instids = spot_req_inst_ids.values()
-        except boto.exception.BotoServerError, e:
-            module.fail_json(msg = "Instance creation failed => %s: %s" % (e.error_code, e.error_message))
-
-        # wait here until the instances are up
-        num_running = 0
-        wait_timeout = time.time() + wait_timeout
-        while wait_timeout > time.time() and num_running < len(instids):
-            try:
-                res_list = ec2.get_all_instances(instids)
-            except boto.exception.BotoServerError, e:
-                if e.error_code == 'InvalidInstanceID.NotFound':
-                    time.sleep(1)
+            for instance_filter in filters:
+                instance_filter = instance_filter.strip()
+                if not instance_filter or '=' not in instance_filter:
                     continue
-                else:
-                    raise
+                filter_key, filter_value = [x.strip() for x in instance_filter.split('=', 1)]
+                if not filter_key:
+                    continue
+                self.ec2_instance_filters[filter_key].append(filter_value)
 
-            num_running = 0
-            for res in res_list:
-                num_running += len([ i for i in res.instances if i.state=='running' ])
-            if len(res_list) <= 0:
-                # got a bad response of some sort, possibly due to
-                # stale/cached data. Wait a second and then try again
-                time.sleep(1)
-                continue
-            if wait and num_running < len(instids):
-                time.sleep(5)
-            else:
-                break
+    def parse_cli_args(self):
+        ''' Command line argument processing '''
 
-        if wait and wait_timeout <= time.time():
-            # waiting took too long
-            module.fail_json(msg = "wait for instances running timeout on %s" % time.asctime())
-
-        #We do this after the loop ends so that we end up with one list
-        for res in res_list:
-            running_instances.extend(res.instances)
-
-        # Enabled by default by AWS
-        if source_dest_check is False:
-            for inst in res.instances:
-                inst.modify_attribute('sourceDestCheck', False)
-
-        # Disabled by default by AWS
-        if termination_protection is True:
-            for inst in res.instances:
-                inst.modify_attribute('disableApiTermination', True)
-
-        # Leave this as late as possible to try and avoid InvalidInstanceID.NotFound
-        if instance_tags:
-            try:
-                ec2.create_tags(instids, instance_tags)
-            except boto.exception.EC2ResponseError, e:
-                module.fail_json(msg = "Instance tagging failed => %s: %s" % (e.error_code, e.error_message))
-
-    instance_dict_array = []
-    created_instance_ids = []
-    for inst in running_instances:
-        inst.update()
-        d = get_instance_info(inst)
-        created_instance_ids.append(inst.id)
-        instance_dict_array.append(d)
-
-    return (instance_dict_array, created_instance_ids, changed)
+        parser = argparse.ArgumentParser(description='Produce an Ansible Inventory file based on EC2')
+        parser.add_argument('--list', action='store_true', default=True,
+                           help='List instances (default: True)')
+        parser.add_argument('--host', action='store',
+                           help='Get all the variables about a specific instance')
+        parser.add_argument('--refresh-cache', action='store_true', default=False,
+                           help='Force refresh of cache by making API requests to EC2 (default: False - use cache files)')
+        parser.add_argument('--profile', '--boto-profile', action='store', dest='boto_profile',
+                           help='Use boto profile for connections to EC2')
+        self.args = parser.parse_args()
 
 
-def terminate_instances(module, ec2, instance_ids):
-    """
-    Terminates a list of instances
+    def do_api_calls_update_cache(self):
+        ''' Do API calls to each region, and save data in cache files '''
 
-    module: Ansible module object
-    ec2: authenticated ec2 connection object
-    termination_list: a list of instances to terminate in the form of
-      [ {id: <inst-id>}, ..]
+        if self.route53_enabled:
+            self.get_route53_records()
 
-    Returns a dictionary of instance information
-    about the instances terminated.
+        for region in self.regions:
+            self.get_instances_by_region(region)
+            if self.rds_enabled:
+                self.get_rds_instances_by_region(region)
+            if self.elasticache_enabled:
+                self.get_elasticache_clusters_by_region(region)
+                self.get_elasticache_replication_groups_by_region(region)
 
-    If the instance to be terminated is running
-    "changed" will be set to False.
+        self.write_to_cache(self.inventory, self.cache_path_cache)
+        self.write_to_cache(self.index, self.cache_path_index)
 
-    """
-
-    # Whether to wait for termination to complete before returning
-    wait = module.params.get('wait')
-    wait_timeout = int(module.params.get('wait_timeout'))
-
-    changed = False
-    instance_dict_array = []
-
-    if not isinstance(instance_ids, list) or len(instance_ids) < 1:
-        module.fail_json(msg='instance_ids should be a list of instances, aborting')
-
-    terminated_instance_ids = []
-    for res in ec2.get_all_instances(instance_ids):
-        for inst in res.instances:
-            if inst.state == 'running' or inst.state == 'stopped':
-                terminated_instance_ids.append(inst.id)
-                instance_dict_array.append(get_instance_info(inst))
-                try:
-                    ec2.terminate_instances([inst.id])
-                except EC2ResponseError, e:
-                    module.fail_json(msg='Unable to terminate instance {0}, error: {1}'.format(inst.id, e))
-                changed = True
-
-    # wait here until the instances are 'terminated'
-    if wait:
-        num_terminated = 0
-        wait_timeout = time.time() + wait_timeout
-        while wait_timeout > time.time() and num_terminated < len(terminated_instance_ids):
-            response = ec2.get_all_instances( \
-                instance_ids=terminated_instance_ids, \
-                filters={'instance-state-name':'terminated'})
-            try:
-                num_terminated = len(response.pop().instances)
-            except Exception, e:
-                # got a bad response of some sort, possibly due to
-                # stale/cached data. Wait a second and then try again
-                time.sleep(1)
-                continue
-
-            if num_terminated < len(terminated_instance_ids):
-                time.sleep(5)
-
-        # waiting took too long
-        if wait_timeout < time.time() and num_terminated < len(terminated_instance_ids):
-            module.fail_json(msg = "wait for instance termination timeout on %s" % time.asctime())
-        #Lets get the current state of the instances after terminating - issue600
-        instance_dict_array = []
-        for res in ec2.get_all_instances(instance_ids=terminated_instance_ids,\
-                                            filters={'instance-state-name':'terminated'}):
-            for inst in res.instances:
-                instance_dict_array.append(get_instance_info(inst))
-
-
-    return (changed, instance_dict_array, terminated_instance_ids)
-
-
-def startstop_instances(module, ec2, instance_ids, state, instance_tags):
-    """
-    Starts or stops a list of existing instances
-
-    module: Ansible module object
-    ec2: authenticated ec2 connection object
-    instance_ids: The list of instances to start in the form of
-      [ {id: <inst-id>}, ..]
-    instance_tags: A dict of tag keys and values in the form of
-      {key: value, ... }
-    state: Intended state ("running" or "stopped")
-
-    Returns a dictionary of instance information
-    about the instances started/stopped.
-
-    If the instance was not able to change state,
-    "changed" will be set to False.
-
-    Note that if instance_ids and instance_tags are both non-empty,
-    this method will process the intersection of the two
-    """
-
-    wait = module.params.get('wait')
-    wait_timeout = int(module.params.get('wait_timeout'))
-    source_dest_check = module.params.get('source_dest_check')
-    termination_protection = module.params.get('termination_protection')
-    changed = False
-    instance_dict_array = []
-    source_dest_check = module.params.get('source_dest_check')
-    termination_protection = module.params.get('termination_protection')
-
-    if not isinstance(instance_ids, list) or len(instance_ids) < 1:
-        # Fail unless the user defined instance tags
-        if not instance_tags:
-            module.fail_json(msg='instance_ids should be a list of instances, aborting')
-
-    # To make an EC2 tag filter, we need to prepend 'tag:' to each key.
-    # An empty filter does no filtering, so it's safe to pass it to the
-    # get_all_instances method even if the user did not specify instance_tags
-    filters = {}
-    if instance_tags:
-        for key, value in instance_tags.items():
-            filters["tag:" + key] = value
-
-     # Check that our instances are not in the state we want to take
-
-    # Check (and eventually change) instances attributes and instances state
-    running_instances_array = []
-    for res in ec2.get_all_instances(instance_ids, filters=filters):
-        for inst in res.instances:
-
-            # Check "source_dest_check" attribute
-            if inst.get_attribute('sourceDestCheck')['sourceDestCheck'] != source_dest_check:
-                inst.modify_attribute('sourceDestCheck', source_dest_check)
-                changed = True
-
-            # Check "termination_protection" attribute
-            if inst.get_attribute('disableApiTermination')['disableApiTermination'] != termination_protection:
-                inst.modify_attribute('disableApiTermination', termination_protection)
-                changed = True
-
-            # Check instance state
-            if inst.state != state:
-                instance_dict_array.append(get_instance_info(inst))
-                try:
-                    if state == 'running':
-                        inst.start()
-                    else:
-                        inst.stop()
-                except EC2ResponseError, e:
-                    module.fail_json(msg='Unable to change state for instance {0}, error: {1}'.format(inst.id, e))
-                changed = True
-
-    ## Wait for all the instances to finish starting or stopping
-    wait_timeout = time.time() + wait_timeout
-    while wait and wait_timeout > time.time():
-        instance_dict_array = []
-        matched_instances = []
-        for res in ec2.get_all_instances(instance_ids):
-            for i in res.instances:
-                if i.state == state:
-                    instance_dict_array.append(get_instance_info(i))
-                    matched_instances.append(i)
-        if len(matched_instances) < len(instance_ids):
-            time.sleep(5)
+    def connect(self, region):
+        ''' create connection to api server'''
+        if self.eucalyptus:
+            conn = boto.connect_euca(host=self.eucalyptus_host, **self.credentials)
+            conn.APIVersion = '2010-08-31'
         else:
-            break
+            conn = self.connect_to_aws(ec2, region)
+        return conn
 
-    if wait and wait_timeout <= time.time():
-        # waiting took too long
-        module.fail_json(msg = "wait for instances running timeout on %s" % time.asctime())
+    def boto_fix_security_token_in_profile(self, connect_args):
+        ''' monkey patch for boto issue boto/boto#2100 '''
+        profile = 'profile ' + self.boto_profile
+        if boto.config.has_option(profile, 'aws_security_token'):
+            connect_args['security_token'] = boto.config.get(profile, 'aws_security_token')
+        return connect_args
 
-    return (changed, instance_dict_array, instance_ids)
+    def connect_to_aws(self, module, region):
+        connect_args = self.credentials
 
-def restart_instances(module, ec2, instance_ids, state, instance_tags):
-    """
-    Restarts a list of existing instances
+        # only pass the profile name if it's set (as it is not supported by older boto versions)
+        if self.boto_profile:
+            connect_args['profile_name'] = self.boto_profile
+            self.boto_fix_security_token_in_profile(connect_args)
 
-    module: Ansible module object
-    ec2: authenticated ec2 connection object
-    instance_ids: The list of instances to start in the form of
-      [ {id: <inst-id>}, ..]
-    instance_tags: A dict of tag keys and values in the form of
-      {key: value, ... }
-    state: Intended state ("restarted")
+        conn = module.connect_to_region(region, **connect_args)
+        # connect_to_region will fail "silently" by returning None if the region name is wrong or not supported
+        if conn is None:
+            self.fail_with_error("region name: %s likely not supported, or AWS is down.  connection to region failed." % region)
+        return conn
 
-    Returns a dictionary of instance information
-    about the instances.
+    def get_instances_by_region(self, region):
+        ''' Makes an AWS EC2 API call to the list of instances in a particular
+        region '''
 
-    If the instance was not able to change state,
-    "changed" will be set to False.
-
-    Wait will not apply here as this is a OS level operation.
-
-    Note that if instance_ids and instance_tags are both non-empty,
-    this method will process the intersection of the two.
-    """
-
-    source_dest_check = module.params.get('source_dest_check')
-    termination_protection = module.params.get('termination_protection')
-    changed = False
-    instance_dict_array = []
-    source_dest_check = module.params.get('source_dest_check')
-    termination_protection = module.params.get('termination_protection')
-
-    if not isinstance(instance_ids, list) or len(instance_ids) < 1:
-        # Fail unless the user defined instance tags
-        if not instance_tags:
-            module.fail_json(msg='instance_ids should be a list of instances, aborting')
-
-    # To make an EC2 tag filter, we need to prepend 'tag:' to each key.
-    # An empty filter does no filtering, so it's safe to pass it to the
-    # get_all_instances method even if the user did not specify instance_tags
-    filters = {}
-    if instance_tags:
-        for key, value in instance_tags.items():
-            filters["tag:" + key] = value
-
-     # Check that our instances are not in the state we want to take
-
-    # Check (and eventually change) instances attributes and instances state
-    running_instances_array = []
-    for res in ec2.get_all_instances(instance_ids, filters=filters):
-        for inst in res.instances:
-
-            # Check "source_dest_check" attribute
-            if inst.get_attribute('sourceDestCheck')['sourceDestCheck'] != source_dest_check:
-                inst.modify_attribute('sourceDestCheck', source_dest_check)
-                changed = True
-
-            # Check "termination_protection" attribute
-            if inst.get_attribute('disableApiTermination')['disableApiTermination'] != termination_protection:
-                inst.modify_attribute('disableApiTermination', termination_protection)
-                changed = True
-
-            # Check instance state
-            if inst.state != state:
-                instance_dict_array.append(get_instance_info(inst))
-                try:
-                    inst.reboot()
-                except EC2ResponseError, e:
-                    module.fail_json(msg='Unable to change state for instance {0}, error: {1}'.format(inst.id, e))
-                changed = True
-
-    return (changed, instance_dict_array, instance_ids)
-
-
-def main():
-    argument_spec = ec2_argument_spec()
-    argument_spec.update(dict(
-            key_name = dict(aliases = ['keypair']),
-            id = dict(),
-            group = dict(type='list', aliases=['groups']),
-            group_id = dict(type='list'),
-            zone = dict(aliases=['aws_zone', 'ec2_zone']),
-            instance_type = dict(aliases=['type']),
-            spot_price = dict(),
-            spot_type = dict(default='one-time', choices=["one-time", "persistent"]),
-            spot_launch_group = dict(),
-            image = dict(),
-            kernel = dict(),
-            count = dict(type='int', default='1'),
-            monitoring = dict(type='bool', default=False),
-            ramdisk = dict(),
-            wait = dict(type='bool', default=False),
-            wait_timeout = dict(default=300),
-            spot_wait_timeout = dict(default=600),
-            placement_group = dict(),
-            user_data = dict(),
-            instance_tags = dict(type='dict'),
-            vpc_subnet_id = dict(),
-            assign_public_ip = dict(type='bool', default=False),
-            private_ip = dict(),
-            instance_profile_name = dict(),
-            instance_ids = dict(type='list', aliases=['instance_id']),
-            source_dest_check = dict(type='bool', default=True),
-            termination_protection = dict(type='bool', default=False),
-            state = dict(default='present', choices=['present', 'absent', 'running', 'restarted', 'stopped']),
-            exact_count = dict(type='int', default=None),
-            count_tag = dict(),
-            volumes = dict(type='list'),
-            ebs_optimized = dict(type='bool', default=False),
-            tenancy = dict(default='default'),
-            network_interfaces = dict(type='list', aliases=['network_interface'])
-        )
-    )
-
-    module = AnsibleModule(
-        argument_spec=argument_spec,
-        mutually_exclusive = [
-                                ['exact_count', 'count'],
-                                ['exact_count', 'state'],
-                                ['exact_count', 'instance_ids'],
-                                ['network_interfaces', 'assign_public_ip'],
-                                ['network_interfaces', 'group'],
-                                ['network_interfaces', 'group_id'],
-                                ['network_interfaces', 'private_ip'],
-                                ['network_interfaces', 'vpc_subnet_id'],
-                             ],
-    )
-
-    if not HAS_BOTO:
-        module.fail_json(msg='boto required for this module')
-
-    ec2 = ec2_connect(module)
-
-    region, ec2_url, aws_connect_kwargs = get_aws_connection_info(module)
-
-    if region:
         try:
-            vpc = connect_to_aws(boto.vpc, region, **aws_connect_kwargs)
-        except boto.exception.NoAuthHandlerFound, e:
-            module.fail_json(msg = str(e))
-    else:
-        vpc = None
+            conn = self.connect(region)
+            reservations = []
+            if self.ec2_instance_filters:
+                for filter_key, filter_values in self.ec2_instance_filters.items():
+                    reservations.extend(conn.get_all_instances(filters = { filter_key : filter_values }))
+            else:
+                reservations = conn.get_all_instances()
 
-    tagged_instances = []
+            # Pull the tags back in a second step
+            # AWS are on record as saying that the tags fetched in the first `get_all_instances` request are not
+            # reliable and may be missing, and the only way to guarantee they are there is by calling `get_all_tags`
+            instance_ids = []
+            for reservation in reservations:
+                instance_ids.extend([instance.id for instance in reservation.instances])
 
-    state = module.params['state']
+            max_filter_value = 199
+            tags = []
+            for i in range(0, len(instance_ids), max_filter_value):
+                tags.extend(conn.get_all_tags(filters={'resource-type': 'instance', 'resource-id': instance_ids[i:i+max_filter_value]}))
 
-    if state == 'absent':
-        instance_ids = module.params['instance_ids']
-        if not instance_ids:
-            module.fail_json(msg='instance_ids list is required for absent state')
+            tags_by_instance_id = defaultdict(dict)
+            for tag in tags:
+                tags_by_instance_id[tag.res_id][tag.name] = tag.value
 
-        (changed, instance_dict_array, new_instance_ids) = terminate_instances(module, ec2, instance_ids)
+            for reservation in reservations:
+                for instance in reservation.instances:
+                    instance.tags = tags_by_instance_id[instance.id]
+                    self.add_instance(instance, region)
 
-    elif state in ('running', 'stopped'):
-        instance_ids = module.params.get('instance_ids')
-        instance_tags = module.params.get('instance_tags')
-        if not (isinstance(instance_ids, list) or isinstance(instance_tags, dict)):
-            module.fail_json(msg='running list needs to be a list of instances or set of tags to run: %s' % instance_ids)
+        except boto.exception.BotoServerError as e:
+            if e.error_code == 'AuthFailure':
+                error = self.get_auth_error_message()
+            else:
+                backend = 'Eucalyptus' if self.eucalyptus else 'AWS'
+                error = "Error connecting to %s backend.\n%s" % (backend, e.message)
+            self.fail_with_error(error, 'getting EC2 instances')
 
-        (changed, instance_dict_array, new_instance_ids) = startstop_instances(module, ec2, instance_ids, state, instance_tags)
+    def get_rds_instances_by_region(self, region):
+        ''' Makes an AWS API call to the list of RDS instances in a particular
+        region '''
 
-    elif state in ('restarted'):
-        instance_ids = module.params.get('instance_ids')
-        instance_tags = module.params.get('instance_tags')
-        if not (isinstance(instance_ids, list) or isinstance(instance_tags, dict)):
-            module.fail_json(msg='running list needs to be a list of instances or set of tags to run: %s' % instance_ids)
+        try:
+            conn = self.connect_to_aws(rds, region)
+            if conn:
+                marker = None
+                while True:
+                    instances = conn.get_all_dbinstances(marker=marker)
+                    marker = instances.marker
+                    for instance in instances:
+                        self.add_rds_instance(instance, region)
+                    if not marker:
+                        break
+        except boto.exception.BotoServerError as e:
+            error = e.reason
 
-        (changed, instance_dict_array, new_instance_ids) = restart_instances(module, ec2, instance_ids, state, instance_tags)
+            if e.error_code == 'AuthFailure':
+                error = self.get_auth_error_message()
+            if not e.reason == "Forbidden":
+                error = "Looks like AWS RDS is down:\n%s" % e.message
+            self.fail_with_error(error, 'getting RDS instances')
 
-    elif state == 'present':
-        # Changed is always set to true when provisioning new instances
-        if not module.params.get('image'):
-            module.fail_json(msg='image parameter is required for new instance')
+    def get_elasticache_clusters_by_region(self, region):
+        ''' Makes an AWS API call to the list of ElastiCache clusters (with
+        nodes' info) in a particular region.'''
 
-        if module.params.get('exact_count') is None:
-            (instance_dict_array, new_instance_ids, changed) = create_instances(module, ec2, vpc)
+        # ElastiCache boto module doesn't provide a get_all_intances method,
+        # that's why we need to call describe directly (it would be called by
+        # the shorthand method anyway...)
+        try:
+            conn = self.connect_to_aws(elasticache, region)
+            if conn:
+                # show_cache_node_info = True
+                # because we also want nodes' information
+                response = conn.describe_cache_clusters(None, None, None, True)
+
+        except boto.exception.BotoServerError as e:
+            error = e.reason
+
+            if e.error_code == 'AuthFailure':
+                error = self.get_auth_error_message()
+            if not e.reason == "Forbidden":
+                error = "Looks like AWS ElastiCache is down:\n%s" % e.message
+            self.fail_with_error(error, 'getting ElastiCache clusters')
+
+        try:
+            # Boto also doesn't provide wrapper classes to CacheClusters or
+            # CacheNodes. Because of that wo can't make use of the get_list
+            # method in the AWSQueryConnection. Let's do the work manually
+            clusters = response['DescribeCacheClustersResponse']['DescribeCacheClustersResult']['CacheClusters']
+
+        except KeyError as e:
+            error = "ElastiCache query to AWS failed (unexpected format)."
+            self.fail_with_error(error, 'getting ElastiCache clusters')
+
+        for cluster in clusters:
+            self.add_elasticache_cluster(cluster, region)
+
+    def get_elasticache_replication_groups_by_region(self, region):
+        ''' Makes an AWS API call to the list of ElastiCache replication groups
+        in a particular region.'''
+
+        # ElastiCache boto module doesn't provide a get_all_intances method,
+        # that's why we need to call describe directly (it would be called by
+        # the shorthand method anyway...)
+        try:
+            conn = self.connect_to_aws(elasticache, region)
+            if conn:
+                response = conn.describe_replication_groups()
+
+        except boto.exception.BotoServerError as e:
+            error = e.reason
+
+            if e.error_code == 'AuthFailure':
+                error = self.get_auth_error_message()
+            if not e.reason == "Forbidden":
+                error = "Looks like AWS ElastiCache [Replication Groups] is down:\n%s" % e.message
+            self.fail_with_error(error, 'getting ElastiCache clusters')
+
+        try:
+            # Boto also doesn't provide wrapper classes to ReplicationGroups
+            # Because of that wo can't make use of the get_list method in the
+            # AWSQueryConnection. Let's do the work manually
+            replication_groups = response['DescribeReplicationGroupsResponse']['DescribeReplicationGroupsResult']['ReplicationGroups']
+
+        except KeyError as e:
+            error = "ElastiCache [Replication Groups] query to AWS failed (unexpected format)."
+            self.fail_with_error(error, 'getting ElastiCache clusters')
+
+        for replication_group in replication_groups:
+            self.add_elasticache_replication_group(replication_group, region)
+
+    def get_auth_error_message(self):
+        ''' create an informative error message if there is an issue authenticating'''
+        errors = ["Authentication error retrieving ec2 inventory."]
+        if None in [os.environ.get('AWS_ACCESS_KEY_ID'), os.environ.get('AWS_SECRET_ACCESS_KEY')]:
+            errors.append(' - No AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY environment vars found')
         else:
-            (tagged_instances, instance_dict_array, new_instance_ids, changed) = enforce_count(module, ec2, vpc)
+            errors.append(' - AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment vars found but may not be correct')
 
-    module.exit_json(changed=changed, instance_ids=new_instance_ids, instances=instance_dict_array, tagged_instances=tagged_instances)
+        boto_paths = ['/etc/boto.cfg', '~/.boto', '~/.aws/credentials']
+        boto_config_found = list(p for p in boto_paths if os.path.isfile(os.path.expanduser(p)))
+        if len(boto_config_found) > 0:
+            errors.append(" - Boto configs found at '%s', but the credentials contained may not be correct" % ', '.join(boto_config_found))
+        else:
+            errors.append(" - No Boto config found at any expected location '%s'" % ', '.join(boto_paths))
 
-# import module snippets
-from ansible.module_utils.basic import *
-from ansible.module_utils.ec2 import *
+        return '\n'.join(errors)
 
-main()
+    def fail_with_error(self, err_msg, err_operation=None):
+        '''log an error to std err for ansible-playbook to consume and exit'''
+        if err_operation:
+            err_msg = 'ERROR: "{err_msg}", while: {err_operation}'.format(
+                err_msg=err_msg, err_operation=err_operation)
+        sys.stderr.write(err_msg)
+        sys.exit(1)
+
+    def get_instance(self, region, instance_id):
+        conn = self.connect(region)
+
+        reservations = conn.get_all_instances([instance_id])
+        for reservation in reservations:
+            for instance in reservation.instances:
+                return instance
+
+    def add_instance(self, instance, region):
+        ''' Adds an instance to the inventory and index, as long as it is
+        addressable '''
+
+        # Only return instances with desired instance states
+        if instance.state not in self.ec2_instance_states:
+            return
+
+        # Select the best destination address
+        if self.destination_format and self.destination_format_tags:
+            dest = self.destination_format.format(*[ getattr(instance, 'tags').get(tag, '') for tag in self.destination_format_tags ])
+        elif instance.subnet_id:
+            dest = getattr(instance, self.vpc_destination_variable, None)
+            if dest is None:
+                dest = getattr(instance, 'tags').get(self.vpc_destination_variable, None)
+        else:
+            dest = getattr(instance, self.destination_variable, None)
+            if dest is None:
+                dest = getattr(instance, 'tags').get(self.destination_variable, None)
+
+        if not dest:
+            # Skip instances we cannot address (e.g. private VPC subnet)
+            return
+
+        # Set the inventory name
+        hostname = None
+        if self.hostname_variable:
+            if self.hostname_variable.startswith('tag_'):
+                hostname = instance.tags.get(self.hostname_variable[4:], None)
+            else:
+                hostname = getattr(instance, self.hostname_variable)
+
+        # If we can't get a nice hostname, use the destination address
+        if not hostname:
+            hostname = dest
+        else:
+            hostname = self.to_safe(hostname).lower()
+
+        # if we only want to include hosts that match a pattern, skip those that don't
+        if self.pattern_include and not self.pattern_include.match(hostname):
+            return
+
+        # if we need to exclude hosts that match a pattern, skip those
+        if self.pattern_exclude and self.pattern_exclude.match(hostname):
+            return
+
+        # Add to index
+        self.index[hostname] = [region, instance.id]
+
+        # Inventory: Group by instance ID (always a group of 1)
+        if self.group_by_instance_id:
+            self.inventory[instance.id] = [hostname]
+            if self.nested_groups:
+                self.push_group(self.inventory, 'instances', instance.id)
+
+        # Inventory: Group by region
+        if self.group_by_region:
+            self.push(self.inventory, region, hostname)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'regions', region)
+
+        # Inventory: Group by availability zone
+        if self.group_by_availability_zone:
+            self.push(self.inventory, instance.placement, hostname)
+            if self.nested_groups:
+                if self.group_by_region:
+                    self.push_group(self.inventory, region, instance.placement)
+                self.push_group(self.inventory, 'zones', instance.placement)
+
+        # Inventory: Group by Amazon Machine Image (AMI) ID
+        if self.group_by_ami_id:
+            ami_id = self.to_safe(instance.image_id)
+            self.push(self.inventory, ami_id, hostname)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'images', ami_id)
+
+        # Inventory: Group by instance type
+        if self.group_by_instance_type:
+            type_name = self.to_safe('type_' + instance.instance_type)
+            self.push(self.inventory, type_name, hostname)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'types', type_name)
+
+        # Inventory: Group by key pair
+        if self.group_by_key_pair and instance.key_name:
+            key_name = self.to_safe('key_' + instance.key_name)
+            self.push(self.inventory, key_name, hostname)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'keys', key_name)
+
+        # Inventory: Group by VPC
+        if self.group_by_vpc_id and instance.vpc_id:
+            vpc_id_name = self.to_safe('vpc_id_' + instance.vpc_id)
+            self.push(self.inventory, vpc_id_name, hostname)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'vpcs', vpc_id_name)
+
+        # Inventory: Group by security group
+        if self.group_by_security_group:
+            try:
+                for group in instance.groups:
+                    key = self.to_safe("security_group_" + group.name)
+                    self.push(self.inventory, key, hostname)
+                    if self.nested_groups:
+                        self.push_group(self.inventory, 'security_groups', key)
+            except AttributeError:
+                self.fail_with_error('\n'.join(['Package boto seems a bit older.',
+                                            'Please upgrade boto >= 2.3.0.']))
+
+        # Inventory: Group by tag keys
+        if self.group_by_tag_keys:
+            for k, v in instance.tags.items():
+                if self.expand_csv_tags and v and ',' in v:
+                    values = map(lambda x: x.strip(), v.split(','))
+                else:
+                    values = [v]
+
+                for v in values:
+                    if v:
+                        key = self.to_safe("tag_" + k + "=" + v)
+                    else:
+                        key = self.to_safe("tag_" + k)
+                    self.push(self.inventory, key, hostname)
+                    if self.nested_groups:
+                        self.push_group(self.inventory, 'tags', self.to_safe("tag_" + k))
+                        if v:
+                            self.push_group(self.inventory, self.to_safe("tag_" + k), key)
+
+        # Inventory: Group by Route53 domain names if enabled
+        if self.route53_enabled and self.group_by_route53_names:
+            route53_names = self.get_instance_route53_names(instance)
+            for name in route53_names:
+                self.push(self.inventory, name, hostname)
+                if self.nested_groups:
+                    self.push_group(self.inventory, 'route53', name)
+
+        # Global Tag: instances without tags
+        if self.group_by_tag_none and len(instance.tags) == 0:
+            self.push(self.inventory, 'tag_none', hostname)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'tags', 'tag_none')
+
+        # Global Tag: tag all EC2 instances
+        self.push(self.inventory, 'ec2', hostname)
+
+        self.inventory["_meta"]["hostvars"][hostname] = self.get_host_info_dict_from_instance(instance)
+        self.inventory["_meta"]["hostvars"][hostname]['ansible_ssh_host'] = dest
+
+
+    def add_rds_instance(self, instance, region):
+        ''' Adds an RDS instance to the inventory and index, as long as it is
+        addressable '''
+
+        # Only want available instances unless all_rds_instances is True
+        if not self.all_rds_instances and instance.status != 'available':
+            return
+
+        # Select the best destination address
+        dest = instance.endpoint[0]
+
+        if not dest:
+            # Skip instances we cannot address (e.g. private VPC subnet)
+            return
+
+        # Set the inventory name
+        hostname = None
+        if self.hostname_variable:
+            if self.hostname_variable.startswith('tag_'):
+                hostname = instance.tags.get(self.hostname_variable[4:], None)
+            else:
+                hostname = getattr(instance, self.hostname_variable)
+
+        # If we can't get a nice hostname, use the destination address
+        if not hostname:
+            hostname = dest
+
+        hostname = self.to_safe(hostname).lower()
+
+        # Add to index
+        self.index[hostname] = [region, instance.id]
+
+        # Inventory: Group by instance ID (always a group of 1)
+        if self.group_by_instance_id:
+            self.inventory[instance.id] = [hostname]
+            if self.nested_groups:
+                self.push_group(self.inventory, 'instances', instance.id)
+
+        # Inventory: Group by region
+        if self.group_by_region:
+            self.push(self.inventory, region, hostname)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'regions', region)
+
+        # Inventory: Group by availability zone
+        if self.group_by_availability_zone:
+            self.push(self.inventory, instance.availability_zone, hostname)
+            if self.nested_groups:
+                if self.group_by_region:
+                    self.push_group(self.inventory, region, instance.availability_zone)
+                self.push_group(self.inventory, 'zones', instance.availability_zone)
+
+        # Inventory: Group by instance type
+        if self.group_by_instance_type:
+            type_name = self.to_safe('type_' + instance.instance_class)
+            self.push(self.inventory, type_name, hostname)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'types', type_name)
+
+        # Inventory: Group by VPC
+        if self.group_by_vpc_id and instance.subnet_group and instance.subnet_group.vpc_id:
+            vpc_id_name = self.to_safe('vpc_id_' + instance.subnet_group.vpc_id)
+            self.push(self.inventory, vpc_id_name, hostname)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'vpcs', vpc_id_name)
+
+        # Inventory: Group by security group
+        if self.group_by_security_group:
+            try:
+                if instance.security_group:
+                    key = self.to_safe("security_group_" + instance.security_group.name)
+                    self.push(self.inventory, key, hostname)
+                    if self.nested_groups:
+                        self.push_group(self.inventory, 'security_groups', key)
+
+            except AttributeError:
+                self.fail_with_error('\n'.join(['Package boto seems a bit older.',
+                                            'Please upgrade boto >= 2.3.0.']))
+
+
+        # Inventory: Group by engine
+        if self.group_by_rds_engine:
+            self.push(self.inventory, self.to_safe("rds_" + instance.engine), hostname)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'rds_engines', self.to_safe("rds_" + instance.engine))
+
+        # Inventory: Group by parameter group
+        if self.group_by_rds_parameter_group:
+            self.push(self.inventory, self.to_safe("rds_parameter_group_" + instance.parameter_group.name), hostname)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'rds_parameter_groups', self.to_safe("rds_parameter_group_" + instance.parameter_group.name))
+
+        # Global Tag: all RDS instances
+        self.push(self.inventory, 'rds', hostname)
+
+        self.inventory["_meta"]["hostvars"][hostname] = self.get_host_info_dict_from_instance(instance)
+        self.inventory["_meta"]["hostvars"][hostname]['ansible_ssh_host'] = dest
+
+    def add_elasticache_cluster(self, cluster, region):
+        ''' Adds an ElastiCache cluster to the inventory and index, as long as
+        it's nodes are addressable '''
+
+        # Only want available clusters unless all_elasticache_clusters is True
+        if not self.all_elasticache_clusters and cluster['CacheClusterStatus'] != 'available':
+            return
+
+        # Select the best destination address
+        if 'ConfigurationEndpoint' in cluster and cluster['ConfigurationEndpoint']:
+            # Memcached cluster
+            dest = cluster['ConfigurationEndpoint']['Address']
+            is_redis = False
+        else:
+            # Redis sigle node cluster
+            # Because all Redis clusters are single nodes, we'll merge the
+            # info from the cluster with info about the node
+            dest = cluster['CacheNodes'][0]['Endpoint']['Address']
+            is_redis = True
+
+        if not dest:
+            # Skip clusters we cannot address (e.g. private VPC subnet)
+            return
+
+        # Add to index
+        self.index[dest] = [region, cluster['CacheClusterId']]
+
+        # Inventory: Group by instance ID (always a group of 1)
+        if self.group_by_instance_id:
+            self.inventory[cluster['CacheClusterId']] = [dest]
+            if self.nested_groups:
+                self.push_group(self.inventory, 'instances', cluster['CacheClusterId'])
+
+        # Inventory: Group by region
+        if self.group_by_region and not is_redis:
+            self.push(self.inventory, region, dest)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'regions', region)
+
+        # Inventory: Group by availability zone
+        if self.group_by_availability_zone and not is_redis:
+            self.push(self.inventory, cluster['PreferredAvailabilityZone'], dest)
+            if self.nested_groups:
+                if self.group_by_region:
+                    self.push_group(self.inventory, region, cluster['PreferredAvailabilityZone'])
+                self.push_group(self.inventory, 'zones', cluster['PreferredAvailabilityZone'])
+
+        # Inventory: Group by node type
+        if self.group_by_instance_type and not is_redis:
+            type_name = self.to_safe('type_' + cluster['CacheNodeType'])
+            self.push(self.inventory, type_name, dest)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'types', type_name)
+
+        # Inventory: Group by VPC (information not available in the current
+        # AWS API version for ElastiCache)
+
+        # Inventory: Group by security group
+        if self.group_by_security_group and not is_redis:
+
+            # Check for the existence of the 'SecurityGroups' key and also if
+            # this key has some value. When the cluster is not placed in a SG
+            # the query can return None here and cause an error.
+            if 'SecurityGroups' in cluster and cluster['SecurityGroups'] is not None:
+                for security_group in cluster['SecurityGroups']:
+                    key = self.to_safe("security_group_" + security_group['SecurityGroupId'])
+                    self.push(self.inventory, key, dest)
+                    if self.nested_groups:
+                        self.push_group(self.inventory, 'security_groups', key)
+
+        # Inventory: Group by engine
+        if self.group_by_elasticache_engine and not is_redis:
+            self.push(self.inventory, self.to_safe("elasticache_" + cluster['Engine']), dest)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'elasticache_engines', self.to_safe(cluster['Engine']))
+
+        # Inventory: Group by parameter group
+        if self.group_by_elasticache_parameter_group:
+            self.push(self.inventory, self.to_safe("elasticache_parameter_group_" + cluster['CacheParameterGroup']['CacheParameterGroupName']), dest)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'elasticache_parameter_groups', self.to_safe(cluster['CacheParameterGroup']['CacheParameterGroupName']))
+
+        # Inventory: Group by replication group
+        if self.group_by_elasticache_replication_group and 'ReplicationGroupId' in cluster and cluster['ReplicationGroupId']:
+            self.push(self.inventory, self.to_safe("elasticache_replication_group_" + cluster['ReplicationGroupId']), dest)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'elasticache_replication_groups', self.to_safe(cluster['ReplicationGroupId']))
+
+        # Global Tag: all ElastiCache clusters
+        self.push(self.inventory, 'elasticache_clusters', cluster['CacheClusterId'])
+
+        host_info = self.get_host_info_dict_from_describe_dict(cluster)
+
+        self.inventory["_meta"]["hostvars"][dest] = host_info
+
+        # Add the nodes
+        for node in cluster['CacheNodes']:
+            self.add_elasticache_node(node, cluster, region)
+
+    def add_elasticache_node(self, node, cluster, region):
+        ''' Adds an ElastiCache node to the inventory and index, as long as
+        it is addressable '''
+
+        # Only want available nodes unless all_elasticache_nodes is True
+        if not self.all_elasticache_nodes and node['CacheNodeStatus'] != 'available':
+            return
+
+        # Select the best destination address
+        dest = node['Endpoint']['Address']
+
+        if not dest:
+            # Skip nodes we cannot address (e.g. private VPC subnet)
+            return
+
+        node_id = self.to_safe(cluster['CacheClusterId'] + '_' + node['CacheNodeId'])
+
+        # Add to index
+        self.index[dest] = [region, node_id]
+
+        # Inventory: Group by node ID (always a group of 1)
+        if self.group_by_instance_id:
+            self.inventory[node_id] = [dest]
+            if self.nested_groups:
+                self.push_group(self.inventory, 'instances', node_id)
+
+        # Inventory: Group by region
+        if self.group_by_region:
+            self.push(self.inventory, region, dest)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'regions', region)
+
+        # Inventory: Group by availability zone
+        if self.group_by_availability_zone:
+            self.push(self.inventory, cluster['PreferredAvailabilityZone'], dest)
+            if self.nested_groups:
+                if self.group_by_region:
+                    self.push_group(self.inventory, region, cluster['PreferredAvailabilityZone'])
+                self.push_group(self.inventory, 'zones', cluster['PreferredAvailabilityZone'])
+
+        # Inventory: Group by node type
+        if self.group_by_instance_type:
+            type_name = self.to_safe('type_' + cluster['CacheNodeType'])
+            self.push(self.inventory, type_name, dest)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'types', type_name)
+
+        # Inventory: Group by VPC (information not available in the current
+        # AWS API version for ElastiCache)
+
+        # Inventory: Group by security group
+        if self.group_by_security_group:
+
+            # Check for the existence of the 'SecurityGroups' key and also if
+            # this key has some value. When the cluster is not placed in a SG
+            # the query can return None here and cause an error.
+            if 'SecurityGroups' in cluster and cluster['SecurityGroups'] is not None:
+                for security_group in cluster['SecurityGroups']:
+                    key = self.to_safe("security_group_" + security_group['SecurityGroupId'])
+                    self.push(self.inventory, key, dest)
+                    if self.nested_groups:
+                        self.push_group(self.inventory, 'security_groups', key)
+
+        # Inventory: Group by engine
+        if self.group_by_elasticache_engine:
+            self.push(self.inventory, self.to_safe("elasticache_" + cluster['Engine']), dest)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'elasticache_engines', self.to_safe("elasticache_" + cluster['Engine']))
+
+        # Inventory: Group by parameter group (done at cluster level)
+
+        # Inventory: Group by replication group (done at cluster level)
+
+        # Inventory: Group by ElastiCache Cluster
+        if self.group_by_elasticache_cluster:
+            self.push(self.inventory, self.to_safe("elasticache_cluster_" + cluster['CacheClusterId']), dest)
+
+        # Global Tag: all ElastiCache nodes
+        self.push(self.inventory, 'elasticache_nodes', dest)
+
+        host_info = self.get_host_info_dict_from_describe_dict(node)
+
+        if dest in self.inventory["_meta"]["hostvars"]:
+            self.inventory["_meta"]["hostvars"][dest].update(host_info)
+        else:
+            self.inventory["_meta"]["hostvars"][dest] = host_info
+
+    def add_elasticache_replication_group(self, replication_group, region):
+        ''' Adds an ElastiCache replication group to the inventory and index '''
+
+        # Only want available clusters unless all_elasticache_replication_groups is True
+        if not self.all_elasticache_replication_groups and replication_group['Status'] != 'available':
+            return
+
+        # Select the best destination address (PrimaryEndpoint)
+        dest = replication_group['NodeGroups'][0]['PrimaryEndpoint']['Address']
+
+        if not dest:
+            # Skip clusters we cannot address (e.g. private VPC subnet)
+            return
+
+        # Add to index
+        self.index[dest] = [region, replication_group['ReplicationGroupId']]
+
+        # Inventory: Group by ID (always a group of 1)
+        if self.group_by_instance_id:
+            self.inventory[replication_group['ReplicationGroupId']] = [dest]
+            if self.nested_groups:
+                self.push_group(self.inventory, 'instances', replication_group['ReplicationGroupId'])
+
+        # Inventory: Group by region
+        if self.group_by_region:
+            self.push(self.inventory, region, dest)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'regions', region)
+
+        # Inventory: Group by availability zone (doesn't apply to replication groups)
+
+        # Inventory: Group by node type (doesn't apply to replication groups)
+
+        # Inventory: Group by VPC (information not available in the current
+        # AWS API version for replication groups
+
+        # Inventory: Group by security group (doesn't apply to replication groups)
+        # Check this value in cluster level
+
+        # Inventory: Group by engine (replication groups are always Redis)
+        if self.group_by_elasticache_engine:
+            self.push(self.inventory, 'elasticache_redis', dest)
+            if self.nested_groups:
+                self.push_group(self.inventory, 'elasticache_engines', 'redis')
+
+        # Global Tag: all ElastiCache clusters
+        self.push(self.inventory, 'elasticache_replication_groups', replication_group['ReplicationGroupId'])
+
+        host_info = self.get_host_info_dict_from_describe_dict(replication_group)
+
+        self.inventory["_meta"]["hostvars"][dest] = host_info
+
+    def get_route53_records(self):
+        ''' Get and store the map of resource records to domain names that
+        point to them. '''
+
+        r53_conn = route53.Route53Connection()
+        all_zones = r53_conn.get_zones()
+
+        route53_zones = [ zone for zone in all_zones if zone.name[:-1]
+                          not in self.route53_excluded_zones ]
+
+        self.route53_records = {}
+
+        for zone in route53_zones:
+            rrsets = r53_conn.get_all_rrsets(zone.id)
+
+            for record_set in rrsets:
+                record_name = record_set.name
+
+                if record_name.endswith('.'):
+                    record_name = record_name[:-1]
+
+                for resource in record_set.resource_records:
+                    self.route53_records.setdefault(resource, set())
+                    self.route53_records[resource].add(record_name)
+
+
+    def get_instance_route53_names(self, instance):
+        ''' Check if an instance is referenced in the records we have from
+        Route53. If it is, return the list of domain names pointing to said
+        instance. If nothing points to it, return an empty list. '''
+
+        instance_attributes = [ 'public_dns_name', 'private_dns_name',
+                                'ip_address', 'private_ip_address' ]
+
+        name_list = set()
+
+        for attrib in instance_attributes:
+            try:
+                value = getattr(instance, attrib)
+            except AttributeError:
+                continue
+
+            if value in self.route53_records:
+                name_list.update(self.route53_records[value])
+
+        return list(name_list)
+
+    def get_host_info_dict_from_instance(self, instance):
+        instance_vars = {}
+        for key in vars(instance):
+            value = getattr(instance, key)
+            key = self.to_safe('ec2_' + key)
+
+            # Handle complex types
+            # state/previous_state changed to properties in boto in https://github.com/boto/boto/commit/a23c379837f698212252720d2af8dec0325c9518
+            if key == 'ec2__state':
+                instance_vars['ec2_state'] = instance.state or ''
+                instance_vars['ec2_state_code'] = instance.state_code
+            elif key == 'ec2__previous_state':
+                instance_vars['ec2_previous_state'] = instance.previous_state or ''
+                instance_vars['ec2_previous_state_code'] = instance.previous_state_code
+            elif type(value) in [int, bool]:
+                instance_vars[key] = value
+            elif isinstance(value, six.string_types):
+                instance_vars[key] = value.strip()
+            elif type(value) == type(None):
+                instance_vars[key] = ''
+            elif key == 'ec2_region':
+                instance_vars[key] = value.name
+            elif key == 'ec2__placement':
+                instance_vars['ec2_placement'] = value.zone
+            elif key == 'ec2_tags':
+                for k, v in value.items():
+                    if self.expand_csv_tags and ',' in v:
+                        v = map(lambda x: x.strip(), v.split(','))
+                    key = self.to_safe('ec2_tag_' + k)
+                    instance_vars[key] = v
+            elif key == 'ec2_groups':
+                group_ids = []
+                group_names = []
+                for group in value:
+                    group_ids.append(group.id)
+                    group_names.append(group.name)
+                instance_vars["ec2_security_group_ids"] = ','.join([str(i) for i in group_ids])
+                instance_vars["ec2_security_group_names"] = ','.join([str(i) for i in group_names])
+            else:
+                pass
+                # TODO Product codes if someone finds them useful
+                #print key
+                #print type(value)
+                #print value
+
+        return instance_vars
+
+    def get_host_info_dict_from_describe_dict(self, describe_dict):
+        ''' Parses the dictionary returned by the API call into a flat list
+            of parameters. This method should be used only when 'describe' is
+            used directly because Boto doesn't provide specific classes. '''
+
+        # I really don't agree with prefixing everything with 'ec2'
+        # because EC2, RDS and ElastiCache are different services.
+        # I'm just following the pattern used until now to not break any
+        # compatibility.
+
+        host_info = {}
+        for key in describe_dict:
+            value = describe_dict[key]
+            key = self.to_safe('ec2_' + self.uncammelize(key))
+
+            # Handle complex types
+
+            # Target: Memcached Cache Clusters
+            if key == 'ec2_configuration_endpoint' and value:
+                host_info['ec2_configuration_endpoint_address'] = value['Address']
+                host_info['ec2_configuration_endpoint_port'] = value['Port']
+
+            # Target: Cache Nodes and Redis Cache Clusters (single node)
+            if key == 'ec2_endpoint' and value:
+                host_info['ec2_endpoint_address'] = value['Address']
+                host_info['ec2_endpoint_port'] = value['Port']
+
+            # Target: Redis Replication Groups
+            if key == 'ec2_node_groups' and value:
+                host_info['ec2_endpoint_address'] = value[0]['PrimaryEndpoint']['Address']
+                host_info['ec2_endpoint_port'] = value[0]['PrimaryEndpoint']['Port']
+                replica_count = 0
+                for node in value[0]['NodeGroupMembers']:
+                    if node['CurrentRole'] == 'primary':
+                        host_info['ec2_primary_cluster_address'] = node['ReadEndpoint']['Address']
+                        host_info['ec2_primary_cluster_port'] = node['ReadEndpoint']['Port']
+                        host_info['ec2_primary_cluster_id'] = node['CacheClusterId']
+                    elif node['CurrentRole'] == 'replica':
+                        host_info['ec2_replica_cluster_address_'+ str(replica_count)] = node['ReadEndpoint']['Address']
+                        host_info['ec2_replica_cluster_port_'+ str(replica_count)] = node['ReadEndpoint']['Port']
+                        host_info['ec2_replica_cluster_id_'+ str(replica_count)] = node['CacheClusterId']
+                        replica_count += 1
+
+            # Target: Redis Replication Groups
+            if key == 'ec2_member_clusters' and value:
+                host_info['ec2_member_clusters'] = ','.join([str(i) for i in value])
+
+            # Target: All Cache Clusters
+            elif key == 'ec2_cache_parameter_group':
+                host_info["ec2_cache_node_ids_to_reboot"] = ','.join([str(i) for i in value['CacheNodeIdsToReboot']])
+                host_info['ec2_cache_parameter_group_name'] = value['CacheParameterGroupName']
+                host_info['ec2_cache_parameter_apply_status'] = value['ParameterApplyStatus']
+
+            # Target: Almost everything
+            elif key == 'ec2_security_groups':
+
+                # Skip if SecurityGroups is None
+                # (it is possible to have the key defined but no value in it).
+                if value is not None:
+                    sg_ids = []
+                    for sg in value:
+                        sg_ids.append(sg['SecurityGroupId'])
+                    host_info["ec2_security_group_ids"] = ','.join([str(i) for i in sg_ids])
+
+            # Target: Everything
+            # Preserve booleans and integers
+            elif type(value) in [int, bool]:
+                host_info[key] = value
+
+            # Target: Everything
+            # Sanitize string values
+            elif isinstance(value, six.string_types):
+                host_info[key] = value.strip()
+
+            # Target: Everything
+            # Replace None by an empty string
+            elif type(value) == type(None):
+                host_info[key] = ''
+
+            else:
+                # Remove non-processed complex types
+                pass
+
+        return host_info
+
+    def get_host_info(self):
+        ''' Get variables about a specific host '''
+
+        if len(self.index) == 0:
+            # Need to load index from cache
+            self.load_index_from_cache()
+
+        if not self.args.host in self.index:
+            # try updating the cache
+            self.do_api_calls_update_cache()
+            if not self.args.host in self.index:
+                # host might not exist anymore
+                return self.json_format_dict({}, True)
+
+        (region, instance_id) = self.index[self.args.host]
+
+        instance = self.get_instance(region, instance_id)
+        return self.json_format_dict(self.get_host_info_dict_from_instance(instance), True)
+
+    def push(self, my_dict, key, element):
+        ''' Push an element onto an array that may not have been defined in
+        the dict '''
+        group_info = my_dict.setdefault(key, [])
+        if isinstance(group_info, dict):
+            host_list = group_info.setdefault('hosts', [])
+            host_list.append(element)
+        else:
+            group_info.append(element)
+
+    def push_group(self, my_dict, key, element):
+        ''' Push a group as a child of another group. '''
+        parent_group = my_dict.setdefault(key, {})
+        if not isinstance(parent_group, dict):
+            parent_group = my_dict[key] = {'hosts': parent_group}
+        child_groups = parent_group.setdefault('children', [])
+        if element not in child_groups:
+            child_groups.append(element)
+
+    def get_inventory_from_cache(self):
+        ''' Reads the inventory from the cache file and returns it as a JSON
+        object '''
+
+        cache = open(self.cache_path_cache, 'r')
+        json_inventory = cache.read()
+        return json_inventory
+
+
+    def load_index_from_cache(self):
+        ''' Reads the index from the cache file sets self.index '''
+
+        cache = open(self.cache_path_index, 'r')
+        json_index = cache.read()
+        self.index = json.loads(json_index)
+
+
+    def write_to_cache(self, data, filename):
+        ''' Writes data in JSON format to a file '''
+
+        json_data = self.json_format_dict(data, True)
+        cache = open(filename, 'w')
+        cache.write(json_data)
+        cache.close()
+
+    def uncammelize(self, key):
+        temp = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', key)
+        return re.sub('([a-z0-9])([A-Z])', r'\1_\2', temp).lower()
+
+    def to_safe(self, word):
+        ''' Converts 'bad' characters in a string to underscores so they can be used as Ansible groups '''
+        regex = "[^A-Za-z0-9\_"
+        if not self.replace_dash_in_groups:
+            regex += "\-"
+        return re.sub(regex + "]", "_", word)
+
+    def json_format_dict(self, data, pretty=False):
+        ''' Converts a dict to a JSON object and dumps it as a formatted
+        string '''
+
+        if pretty:
+            return json.dumps(data, sort_keys=True, indent=2)
+        else:
+            return json.dumps(data)
+
+
+# Run the script
+Ec2Inventory()

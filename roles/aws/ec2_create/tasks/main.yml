@@ -1,4 +1,6 @@
 ---
+- include: base_checks.yml
+
 - name: include variables
   include_vars: "ec2_vars/{{ env }}/{{ server_type }}.yml"
 
