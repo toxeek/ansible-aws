@@ -1,5 +1,5 @@
 ---
-- name: Debug inventory hosts hosts
+- name: Debug inventory hosts
   debug: var=hostvars[inventory_hostname]
   
 - name: Create the snapshot
