@@ -1,8 +1,13 @@
 ---
-- hosts: dbservers
+# to call this playbook:
+# ansible-playbook --private-key ~/.ssh/tricky-key-pair-ireland.pem -e "env=staging instance_type=dbserver aws_region=eu-west-1" -vvvv ec2_snapshot.yml
+- hosts: "{{ instance_type }}"
   become: true
   gather_facts: true
   become_user: root
+  
+  vars:
+    aws_region: "{{ aws_region }}"
 
   tasks:
     - name: gather instance facts
@@ -10,7 +15,7 @@
       region: "{{ aws_region }}"
         filters:
           vpc-id: vpc-123456
-          "tag:Name": "{{ instance_type }}"
+          "tag:env": "{{ env }}"
       register: ec2_info
 
     - debug: var=ec2_info
@@ -36,9 +41,15 @@
   gather_facts: true
   become: true
   become_user: " {{ ec2_user }}"
-
-  roles:
-    - ec2_snapshot
+  
+  - name: Debug inventory hosts
+    debug: var=hostvars[inventory_hostname]
+  
+  - name: Create the snapshot
+    ec2_snapshot:
+      instance_id: "{{ hostvars[inventory_hostname]['ansible_ec2_instance-id'] }}"
+      device_name: /dev/sda1
+      description: snapshot of /data from "{{ hostvars[inventory_hostname]['ansible_ec2_instance-id'] }}" 
 
 
 
