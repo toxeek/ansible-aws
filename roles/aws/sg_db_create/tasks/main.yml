@@ -1,0 +1,20 @@
+---
+# we pass the region as a variable in the playbook
+- name: Create database security group
+  local_action: 
+    module: ec2_group
+    name: database server 
+    description: Security Group for database servers
+    region: "{{ region }}"
+    rules:
+      - proto: tcp
+        from_port: 22
+        to_port: 22
+        cidr_ip: 83.37.219.0/32 # CHANGE ME
+      - proto: tcp
+        from_port: 3306
+        to_port: 3306
+        cidr_ip: 83.37.219.0/32 # CHANGE ME
+    rules_egress:
+      - proto: all
+        cidr_ip: 0.0.0.0/0

@@ -9,7 +9,10 @@
 #   - A hostname/ip can be a member of multiple groups
 
 # Ex 1: Ungrouped hosts, specify before any group headers.
+192.168.122.231
 
+[kvms]
+192.168.122.231
 ## green.example.com
 ## blue.example.com
 ## 192.168.100.1

@@ -1,0 +1,9 @@
+---
+- name: Debug inventory hosts hosts
+  debug: var=hostvars[inventory_hostname]
+  
+- name: Create the snapshot
+  ec2_snapshot:
+    instance_id: "{{ hostvars[inventory_hostname]['ansible_ec2_instance-id'] }}"
+    device_name: /dev/sda1
+    description: snapshot of /data from "{{ hostvars[inventory_hostname]['ansible_ec2_instance-id'] }}" 

@@ -1,0 +1,16 @@
+---
+- name: "AWS | ECS | Check environment name has been defined"
+  fail: msg="You must specify the name of the environment, e.g. staging"
+  when: env is undefined
+
+- name: "AWS | ECS | Check server type name has been defined"
+  fail: msg="You must specify the name of the server type, e.g. dbserver"
+  when: server_type is undefined
+
+- name: "AWS | ECS | Check count value"
+  fail: msg="You must specify a value for the instances to be created, e.g. 3"
+  when: count is undefined
+
+
+
+

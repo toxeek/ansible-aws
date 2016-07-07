@@ -1,0 +1,44 @@
+---
+- hosts: dbservers
+  become: true
+  gather_facts: true
+  become_user: root
+
+  tasks:
+    - name: gather instance facts
+      ec2_remote_facts:
+      region: "{{ aws_region }}"
+        filters:
+          vpc-id: vpc-123456
+          "tag:Name": "{{ instance_type }}"
+      register: ec2_info
+
+    - debug: var=ec2_info
+    - debug: var=item
+      with_items: ec2_info.instance_ids
+
+    - set_fact:
+         instance_ids: ec2_info.instance_ids
+
+    - add_host: 
+        hostname: "{{ item.public_ip }}" 
+        groupname: ec2hosts
+      with_items: ec2_info.instances
+
+    - name: wait for instances to listen on port 22
+      wait_for:
+        state: started
+        host: "{{ item.public_dns_name }}"
+        port: 22
+      with_items: ec2_info.instances
+
+- hosts: ec2hosts
+  gather_facts: true
+  become: true
+  become_user: " {{ ec2_user }}"
+
+  roles:
+    - ec2_snapshot
+
+
+
