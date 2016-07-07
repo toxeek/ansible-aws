@@ -7,9 +7,6 @@
   become: true
   gather_facts: true
   become_user: "{{ ec2_user }}"
-  
-  vars:
-    aws_region: "{{ aws_region }}"
 
   tasks:
     - name: gather instance facts
