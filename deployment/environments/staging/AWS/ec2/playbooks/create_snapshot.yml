@@ -1,10 +1,10 @@
 ---
 # to call this playbook:
-# ansible-playbook --private-key ~/.ssh/tricky-key-pair-ireland.pem -e "env=staging instance_type=dbserver aws_region=eu-west-1" -vvvv ec2_snapshot.yml
+# ansible-playbook --private-key ~/.ssh/tricky-key-pair-ireland.pem -e "env=staging instance_type=dbserver aws_region=eu-west-1 vpc_id=vpc-123456" -vvvv ec2_snapshot.yml
 - hosts: "{{ instance_type }}"
   become: true
   gather_facts: true
-  become_user: root
+  become_user: "{{ ec2_user }}"
   
   vars:
     aws_region: "{{ aws_region }}"
@@ -14,7 +14,7 @@
       ec2_remote_facts:
       region: "{{ aws_region }}"
         filters:
-          vpc-id: vpc-123456
+          vpc-id: "{{ vpc_id }}"
           "tag:env": "{{ env }}"
       register: ec2_info
 
@@ -40,7 +40,7 @@
 - hosts: ec2hosts
   gather_facts: true
   become: true
-  become_user: " {{ ec2_user }}"
+  become_user: "{{ ec2_user }}"
   
   - name: Debug inventory hosts
     debug: var=hostvars[inventory_hostname]
