@@ -2,7 +2,8 @@
 # note: this playbook doesn't use roles
 # to call this playbook:
 # ansible-playbook --private-key ~/.ssh/tricky-key-pair-ireland.pem -e "env=staging instance_type=dbserver aws_region=eu-west-1 vpc_id=vpc-123456" -vvvv ec2_snapshot.yml
-- hosts: localhost
+- name: gather instances ec2 facts
+  hosts: localhost
   become: true
   gather_facts: true
   become_user: "{{ ec2_user }}"
@@ -38,7 +39,8 @@
         port: 22
       with_items: ec2_info.instances
 
-- hosts: ec2hosts
+- name: take snapshot of instances 
+  hosts: ec2hosts
   gather_facts: true
   become: true
   become_user: "{{ ec2_user }}"
