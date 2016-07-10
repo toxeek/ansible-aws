@@ -39,6 +39,6 @@
   with_items: ec2.instances
   args:
     tags:
-      Name: dbserver
+      Name: "{{ server_type }}"
       env: "{{ env }}"
       # env is an extra var passed to the playbook

@@ -1,4 +1,6 @@
 ---
+# to call this playbook:
+# # ansible-playbook --private-key ~/.ssh/tricky-key-pair-ireland.pem -e "env=staging instance_type=dbserver count=1" -vvvv create_instance.yml
 - name: Provision an EC2 Instance
   hosts: localhost
   connection: local

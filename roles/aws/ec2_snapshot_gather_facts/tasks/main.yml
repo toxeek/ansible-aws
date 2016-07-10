@@ -1,0 +1,14 @@
+---
+- include: base_checks.yml
+
+- name: include variables
+  include_vars: "ec2_vars/{{ env }}/ec2_snapshot_{{ aws_region }}.yml"
+
+- name: gather instance facts
+  ec2_remote_facts:
+    region: "{{ aws_region }}"
+    filters:
+      vpc-id: "{{ vpc_id }}"
+      "tag:env": "{{ env }}"
+      "tag:Name": "{{ server_type }}"
+  register: ec2_info

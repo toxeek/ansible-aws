@@ -1,0 +1,11 @@
+---
+- name: include variables
+  include_vars: "ec2_vars/{{ env }}/ec2_snapshot_{{ aws_region }}.yml"
+  
+- name: Create the snapshot
+  ec2_snapshot:
+    region: "{{ aws_region }}"
+    instance_id: "{{ item.id }}"
+    device_name: /dev/sda1
+    description: snapshot of /data  
+  with_items: ec2_info.instances

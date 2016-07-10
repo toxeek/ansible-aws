@@ -1,37 +1,18 @@
 ---
 # note: this playbook doesn't use roles
 # to call this playbook:
-# ansible-playbook --private-key ~/.ssh/tricky-key-pair-ireland.pem -i dynamic_inventory/ -e "env=staging instance_type=dbserver aws_region=eu-west-1 vpc_id=vpc-1be92e7f remote_user=ubuntu" -vvvv create_snapshot.yml
+# ansible-playbook --private-key ~/.ssh/tricky-key-pair-ireland.pem -i dynamic_inventory/ -e "env=staging instance_type=dbserver aws_region=eu-west-1" -vvvv create_snapshot.yml
 - name: gather instances ec2 facts
   hosts: localhost
   gather_facts: true
 
-  tasks:
-    - name: gather instance facts
-      ec2_remote_facts:
-        region: "{{ aws_region }}"
-        filters:
-          vpc-id: "{{ vpc_id }}"
-          "tag:env": "{{ env }}"
-          "tag:type": "{{ instance_type }}"
-      register: ec2_info
-
-    - debug: var=ec2_info
+  roles:
+    - ec2_snapshot_gather_facts
 
 - name: take snapshot of instances 
   hosts: localhost
   connection: local
   gather_facts: true
-  
-  tasks:
-    - name: Debug inventory hosts
-      debug: var=item.id
-      with_items: ec2_info.instances
 
-    - name: Create the snapshot
-      ec2_snapshot:
-        region: "{{ aws_region }}"
-        instance_id: "{{ item.id }}"
-        device_name: /dev/sda1
-        description: snapshot of /data  
-      with_items: ec2_info.instances
+  roles:
+    - ec2_snapshot_create
