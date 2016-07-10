@@ -3,7 +3,7 @@
   hosts: localhost
   connection: local
   gather_facts: False
-  tags: provisioning
+  tags: deployment
 
   # as newly created instances will not have group_vars/host_vars,
   # we will use include_vars
