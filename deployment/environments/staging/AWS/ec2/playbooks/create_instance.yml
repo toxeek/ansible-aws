@@ -7,8 +7,6 @@
 
   # as newly created instances will not have group_vars/host_vars,
   # we will use include_vars
-  # server_type is a var passed as an extra var to ansible_playbook (-e)
-  # example playbook run: ansible-playbook -vvvv -e "env=staging,server_type=dbserver" create_instance.yml
 
   roles:
     - ec2_create
