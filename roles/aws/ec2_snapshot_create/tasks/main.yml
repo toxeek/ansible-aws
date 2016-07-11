@@ -1,6 +1,6 @@
 ---
 - name: include variables
-  include_vars: "ec2_vars/{{ env }}/ec2_snapshot_{{ aws_region }}.yml"
+  include_vars: "ec2_vars/{{ env }}/ec2_{{ aws_region }}.yml"
   
 - name: Create the snapshot
   ec2_snapshot:
