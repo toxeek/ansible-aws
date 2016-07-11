@@ -6,7 +6,7 @@
   gather_facts: true
 
   roles:
-    - ec2_snapshot_gather_facts
+    - ec2_remote_facts
 
 - name: take snapshot of instances 
   hosts: localhost

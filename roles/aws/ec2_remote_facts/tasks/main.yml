@@ -2,7 +2,7 @@
 - include: base_checks.yml
 
 - name: include variables
-  include_vars: "ec2_vars/{{ env }}/ec2_snapshot_{{ aws_region }}.yml"
+  include_vars: "ec2_vars/{{ env }}/ec2_{{ aws_region }}.yml"
 
 - name: gather instance facts
   ec2_remote_facts:
