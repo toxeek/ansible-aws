@@ -1,5 +1,4 @@
 ---
-# note: this playbook doesn't use roles
 # to call this playbook:
 # ansible-playbook --private-key ~/.ssh/tricky-key-pair-ireland.pem -i dynamic_inventory/ -e "env=staging instance_type=dbserver aws_region=eu-west-1" -vvvv create_snapshot.yml
 - name: gather instances ec2 facts
